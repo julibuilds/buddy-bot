@@ -4,64 +4,116 @@ on:
   push:
     tags:
       - 'v*'
-
-permissions:
-  contents: write
-  packages: write
-  id-token: write
+  workflow_dispatch:
 
 jobs:
   npm:
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ env.VERSION }}
+    permissions:
+      contents: write
+      id-token: write
+
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Use Cached node_modules
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: node-modules-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            node-modules-
+      - name: Setup Pantry
+        uses: pantry-pm/pantry/packages/action@v0.11.26
 
       - name: Install Dependencies
         run: bun install
 
-      - name: Extract tag version
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+      - name: Build SDK
+        run: bun run build
 
-      - name: Publish to npm
-        run: bun publish --access public
+      # Standalone binaries for the platforms the release advertises. Cross
+      # compilation downloads a runtime matching the compiler's version, so
+      # this needs a released Bun — which is what the pantry setup step above
+      # provides.
+      - name: Build release binaries
+        run: bun run build:binaries
+
+      - name: Verify standalone consumer behavior
+        run: bun run test:binaries
+
+      - name: Publish
+        run: pantry publish --npm --access public
         env:
-          BUN_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # Pantry attaches the binaries and extracts this tag's section from
+      # CHANGELOG.md for the body. The previous action-releaser step passed no
+      # notes input at all, so every release back to v0.9.20 published empty,
+      # and its globs pointed at binaries nothing built.
+      #
+      # Needs >= v0.11: the v0.9 extractor matched the bare version with a word
+      # boundary, so `v0.10.1` in a compare link never matched — there is no
+      # boundary between `v` and `0`. `release-checksums` also only exists from
+      # the newer action.
       - name: Create GitHub Release
-        id: create_release
-        uses: stacksjs/action-releaser@v1.1.0
+        uses: pantry-pm/pantry/packages/action@v0.11.26
         with:
-          files: |
-            ./bin/buddy-bot-linux-x64.zip
-            ./bin/buddy-bot-linux-arm64.zip
-            ./bin/buddy-bot-windows-x64.zip
-            ./bin/buddy-bot-darwin-x64.zip
-            ./bin/buddy-bot-darwin-arm64.zip
-          # --- Homebrew tap update support ---
-          # Path to your Homebrew formula template (update this path as needed)
-          # homebrewFormula: .github/homebrew-formula.rb
-          # The owner/repo of your Homebrew tap (update this value as needed)
-          # homebrewRepo: stacksjs/homebrew-tap
-          # Optionally uncomment and set these if you need custom values:
-          # homebrewBranch: main
-          # homebrewPath: Formula
-          # homebrewCommitFormat: "update: {{ formula }} to {{ version }}"
+          release: true
+          release-changelog: CHANGELOG.md
+          release-checksums: 'true'
+          release-files: |
+            ./bin/buddy-linux-x64.zip
+            ./bin/buddy-linux-arm64.zip
+            ./bin/buddy-windows-x64.zip
+            ./bin/buddy-darwin-x64.zip
+            ./bin/buddy-darwin-arm64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Binaries are ~150 MB a version, so old ones are pruned — but not down to
+      # only the newest. The pantry recipe (packages/ts-pantry/src/recipes/buddy.sh.ts
+      # in pantry-pm/pantry) builds its package by downloading these assets, and
+      # its build farm works through several recent versions per run. Keeping
+      # only the newest meant every version but one 404'd at build time.
+      #
+      # KEEP_RELEASES is therefore a contract with that build farm, not just a
+      # storage preference: lowering it below pantry's max-versions breaks
+      # installs of anything but the very latest.
+      #
+      # Only names this workflow produces are pruned, so an asset somebody
+      # attached by hand is never touched. The buddy-bot-* names are the
+      # pre-rename spelling, left stranded on releases up to v0.10.5.
+      #
+      # Housekeeping, so it must not fail a release that already succeeded —
+      # the package is on npm and the release exists by this point.
+      - name: Prune binaries from older releases
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_TAG: ${{ github.ref_name }}
+          KEEP_RELEASES: '3'
+        run: |
+          set -uo pipefail
+
+          PLATFORMS="linux-x64 linux-arm64 windows-x64 darwin-x64 darwin-arm64"
+          PRUNABLE="checksums.txt release-manifest.json"
+          for platform in $PLATFORMS; do
+            PRUNABLE="$PRUNABLE buddy-${platform}.zip buddy-bot-${platform}.zip"
+          done
+
+          # Releases newest-first, minus the ones whose binaries stay.
+          KEPT=$(gh release list --limit 30 --json tagName --jq '.[].tagName' | head -n "$KEEP_RELEASES")
+          echo "Keeping binaries on: $(echo "$KEPT" | tr '\n' ' ')"
+
+          for tag in $(gh release list --limit 30 --json tagName --jq '.[].tagName'); do
+            [ "$tag" = "$CURRENT_TAG" ] && continue
+            if echo "$KEPT" | grep -qxF "$tag"; then
+              continue
+            fi
+
+            for asset in $(gh release view "$tag" --json assets --jq '.assets[].name'); do
+              case " $PRUNABLE " in
+                *" $asset "*)
+                  echo "Pruning $asset from $tag"
+                  gh release delete-asset "$tag" "$asset" --yes || true
+                  ;;
+              esac
+            done
+          done

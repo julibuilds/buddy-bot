@@ -1,4 +1,4 @@
-import type { BuddyBotConfig } from '../types'
+import type { BuddyConfig } from '../types'
 import * as fs from 'node:fs'
 
 export interface WorkflowConfig {
@@ -12,6 +12,7 @@ export interface WorkflowConfig {
     conditions?: string[]
   }
   reviewers?: string[]
+  assignees?: string[]
   labels?: string[]
 }
 
@@ -57,7 +58,7 @@ export class GitHubActionsTemplate {
       - name: Install dependencies
         run: bun install
 
-      - name: Build buddy-bot
+      - name: Build buddy
         run: bun run build`
   }
 
@@ -65,6 +66,18 @@ export class GitHubActionsTemplate {
    * Generate GitHub Actions workflow
    */
   static generateWorkflow(config: WorkflowConfig): string {
+    // Reviewers, assignees and labels travel as flags. The workflow runs
+    // `./buddy update` against whatever buddy.config.ts the checkout carries,
+    // so a per-workflow override can only reach it through the command line —
+    // these fields were accepted and silently dropped before this.
+    const list = (values?: string[]): string =>
+      (values ?? []).map(value => value.replace(/'/g, '')).filter(Boolean).join(',')
+    const prFlags = [
+      list(config.reviewers) ? ` --reviewers '${list(config.reviewers)}'` : '',
+      list(config.assignees) ? ` --assignees '${list(config.assignees)}'` : '',
+      list(config.labels) ? ` --labels '${list(config.labels)}'` : '',
+    ].join('')
+
     const workflow = `name: ${config.name}
 
 on:
@@ -99,9 +112,14 @@ permissions:
   checks: read
   statuses: read
 
+concurrency:
+  group: buddy-\${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   dependency-updates:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -115,7 +133,7 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Build buddy-bot
+      - name: Build buddy
         run: bun run build
 
       - name: Run Buddy dependency updates
@@ -124,32 +142,16 @@ jobs:
           DRY_RUN="\${{ github.event.inputs.dry_run || 'false' }}"
 
           if [ "\$DRY_RUN" = "true" ]; then
-            ./buddy update --strategy "\$STRATEGY" --dry-run --verbose
+            ./buddy update --strategy "\$STRATEGY" --dry-run --verbose${prFlags}
           else
-            ./buddy update --strategy "\$STRATEGY" --verbose
+            ./buddy update --strategy "\$STRATEGY" --verbose${prFlags}
           fi
 
-      - name: Auto-merge updates
+      - name: Auto-merge eligible PRs
         if: \${{ ${config.autoMerge ? 'true' : 'false'} }}
-        run: |
-          echo "Auto-merge is enabled for this workflow"
-
-          # Check if conditions are met for auto-merge
-          STRATEGY="\${{ github.event.inputs.strategy || '${config.strategy || 'all'}' }}"
-          AUTO_MERGE_STRATEGY="${typeof config.autoMerge === 'object' ? config.autoMerge.strategy || 'squash' : 'squash'}"
-
-          echo "Update strategy: \$STRATEGY"
-          echo "Auto-merge strategy: \$AUTO_MERGE_STRATEGY"
-
-          # Enable auto-merge for created PRs
-          # This will be implemented when the PR creation logic is fully integrated
-          # For now, this step serves as a placeholder and configuration validation
-
-          if [ "\$STRATEGY" = "patch" ]; then
-            echo "✅ Patch updates are eligible for auto-merge"
-          else
-            echo "ℹ️ Only patch updates are auto-merged by default"
-          fi
+        run: ./buddy update-check --verbose
+        env:
+          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
 `
 
     return workflow
@@ -158,10 +160,11 @@ jobs:
   /**
    * Generate workflow for different scheduling strategies
    */
-  static generateScheduledWorkflows(config?: BuddyBotConfig): Record<string, string> {
+  static generateScheduledWorkflows(config?: BuddyConfig): Record<string, string> {
+    // Global reviewers and labels are deliberately not baked in: the runtime
+    // reads `pullRequest` from buddy.config.ts on every run, and freezing
+    // today's values into the YAML would shadow every later config edit.
     const autoMergeConfig = config?.pullRequest?.autoMerge
-    const reviewers = config?.pullRequest?.reviewers || []
-    const labels = config?.pullRequest?.labels || []
 
     // Determine auto-merge settings based on configuration
     const dailyAutoMerge = autoMergeConfig?.enabled && autoMergeConfig.conditions?.includes('patch-only')
@@ -180,8 +183,6 @@ jobs:
         schedule: config?.schedule?.cron || '0 2 * * *', // 2 AM daily
         strategy: 'patch',
         autoMerge: dailyAutoMerge,
-        reviewers,
-        labels,
       }),
 
       'dependency-updates-weekly.yml': this.generateWorkflow({
@@ -189,8 +190,6 @@ jobs:
         schedule: '0 2 * * 1', // 2 AM Monday
         strategy: 'minor',
         autoMerge: weeklyAutoMerge,
-        reviewers,
-        labels,
       }),
 
       'dependency-updates-monthly.yml': this.generateWorkflow({
@@ -198,8 +197,6 @@ jobs:
         schedule: '0 2 1 * *', // 2 AM first of month
         strategy: 'major',
         autoMerge: monthlyAutoMerge,
-        reviewers,
-        labels,
       }),
     }
   }
@@ -207,7 +204,7 @@ jobs:
   /**
    * Generate comprehensive workflow with multiple strategies
    */
-  static generateComprehensiveWorkflow(_config?: BuddyBotConfig): string {
+  static generateComprehensiveWorkflow(_config?: BuddyConfig): string {
     return `name: Buddy Dependency Updates
 
 on:
@@ -252,9 +249,14 @@ permissions:
   checks: read
   statuses: read
 
+concurrency:
+  group: buddy-\${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   determine-strategy:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       strategy: \${{ steps.strategy.outputs.strategy }}
       auto_merge: \${{ steps.strategy.outputs.auto_merge }}
@@ -278,6 +280,7 @@ jobs:
 
   dependency-updates:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: determine-strategy
 
     steps:
@@ -292,7 +295,7 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Build buddy-bot
+      - name: Build buddy
         run: bun run build
 
       - name: Scan for updates
@@ -342,7 +345,7 @@ jobs:
   /**
    * Generate Docker-based workflow for complex setups
    */
-  static generateDockerWorkflow(_config?: BuddyBotConfig): string {
+  static generateDockerWorkflow(_config?: BuddyConfig): string {
     return `name: Buddy Dependencies (Docker)
 
 on:
@@ -350,9 +353,14 @@ on:
     - cron: '0 2 * * 1' # Weekly on Monday
   workflow_dispatch:
 
+concurrency:
+  group: buddy-\${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   dependency-updates:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     container:
       image: oven/bun:latest
 
@@ -364,7 +372,7 @@ jobs:
         run: bun install
 
       - name: Run Buddy updates
-        run: bunx buddy-bot update --verbose
+        run: bunx @buddysh/buddy update --verbose
         env:
           GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
 `
@@ -373,7 +381,7 @@ jobs:
   /**
    * Generate workflow for monorepos
    */
-  static generateMonorepoWorkflow(_config?: BuddyBotConfig): string {
+  static generateMonorepoWorkflow(_config?: BuddyConfig): string {
     return `name: Buddy Monorepo Updates
 
 on:
@@ -386,9 +394,14 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: buddy-\${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   find-workspaces:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       workspaces: \${{ steps.workspaces.outputs.workspaces }}
     steps:
@@ -407,6 +420,7 @@ jobs:
   update-workspace:
     needs: find-workspaces
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       matrix:
         workspace: \${{ fromJson(needs.find-workspaces.outputs.workspaces) }}
@@ -421,7 +435,7 @@ jobs:
       - name: Update workspace dependencies
         run: |
           cd \${{ matrix.workspace }}
-          bunx buddy-bot update --verbose
+          bunx @buddysh/buddy update --verbose
         env:
           GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
 `
@@ -430,12 +444,12 @@ jobs:
   /**
    * Generate testing workflow with enhanced manual controls
    */
-  static generateTestingWorkflow(_config?: BuddyBotConfig): string {
+  static generateTestingWorkflow(_config?: BuddyConfig): string {
     return `name: Buddy Update
 
 on:
   schedule:
-    - cron: '*/5 * * * *' # Every 5 minutes for testing
+    - cron: '*/20 * * * *' # Every 20 minutes for testing
   workflow_dispatch: # Manual triggering for development
     inputs:
       strategy:
@@ -474,9 +488,14 @@ permissions:
   checks: read
   statuses: read
 
+concurrency:
+  group: buddy-\${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   dependency-update:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -490,12 +509,12 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Build buddy-bot
+      - name: Build buddy
         run: bun run build
 
       - name: Display test configuration
         run: |
-          echo "🧪 **Buddy Bot Testing Mode**"
+          echo "🧪 **Buddy Testing Mode**"
           echo "Strategy: \${{ github.event.inputs.strategy || 'patch' }}"
           echo "Dry Run: \${{ github.event.inputs.dry_run || 'true' }}"
           echo "Packages: \${{ github.event.inputs.packages || 'all' }}"
@@ -558,7 +577,7 @@ jobs:
       - name: Create test summary
         if: always()
         run: |
-          echo "## 🧪 Buddy Bot Testing Summary" >> \$GITHUB_STEP_SUMMARY
+          echo "## 🧪 Buddy Testing Summary" >> \$GITHUB_STEP_SUMMARY
           echo "" >> \$GITHUB_STEP_SUMMARY
           echo "- **Strategy**: \${{ github.event.inputs.strategy || 'patch' }}" >> \$GITHUB_STEP_SUMMARY
           echo "- **Triggered by**: \${{ github.event_name }}" >> \$GITHUB_STEP_SUMMARY
@@ -569,11 +588,11 @@ jobs:
           echo "" >> \$GITHUB_STEP_SUMMARY
 
           if [ "\${{ github.event_name }}" = "schedule" ]; then
-            echo "⏰ **Scheduled Run**: This was triggered automatically every 5 minutes" >> \$GITHUB_STEP_SUMMARY
+            echo "⏰ **Scheduled Run**: This was triggered automatically every 20 minutes" >> \$GITHUB_STEP_SUMMARY
             echo "💡 **Tip**: Use 'Actions' tab to manually trigger with custom settings" >> \$GITHUB_STEP_SUMMARY
           else
             echo "🖱️ **Manual Trigger**: This was triggered manually from the Actions tab" >> \$GITHUB_STEP_SUMMARY
-            echo "⏰ **Auto-Schedule**: This workflow also runs every 5 minutes for testing" >> \$GITHUB_STEP_SUMMARY
+            echo "⏰ **Auto-Schedule**: This workflow also runs every 20 minutes for testing" >> \$GITHUB_STEP_SUMMARY
           fi
 
           echo "" >> \$GITHUB_STEP_SUMMARY
@@ -591,9 +610,10 @@ jobs:
       strategy?: 'major' | 'minor' | 'patch' | 'all'
       autoMerge?: boolean | { enabled: boolean, strategy: 'merge' | 'squash' | 'rebase', conditions?: string[] }
       reviewers?: string[]
+      assignees?: string[]
       labels?: string[]
     },
-    config?: BuddyBotConfig,
+    config?: BuddyConfig,
   ): string {
     // Determine auto-merge configuration
     let autoMergeConfig: boolean | { enabled: boolean, strategy: 'merge' | 'squash' | 'rebase', conditions?: string[] } = false
@@ -621,8 +641,56 @@ jobs:
       schedule: customConfig.schedule,
       strategy: customConfig.strategy || 'all',
       autoMerge: autoMergeConfig,
-      reviewers: customConfig.reviewers || config?.pullRequest?.reviewers || [],
-      labels: customConfig.labels || config?.pullRequest?.labels || [],
+      // Only the per-workflow overrides are baked in; global `pullRequest`
+      // settings are read from config at runtime, and freezing them into the
+      // YAML would shadow every later edit.
+      reviewers: customConfig.reviewers ?? [],
+      assignees: customConfig.assignees ?? [],
+      labels: customConfig.labels ?? [],
     })
+  }
+
+  /**
+   * Generate the security-audit workflow that runs `buddy security`
+   * against `.github/workflows/*` on push, PR, schedule, and manual
+   * dispatch. Output is emitted as inline annotations via the `github`
+   * reporter when running on a runner.
+   *
+   * Driver: protect against supply-chain attack patterns (Shai-Hulud-class
+   * worms) by failing CI on workflow misconfiguration.
+   */
+  static generateSecurityAuditWorkflow(): string {
+    return `name: GH Actions Security Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+  schedule:
+    - cron: '0 6 * * 1' # Monday 06:00 UTC — weekly drift check
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit GitHub Actions workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Run buddy security
+        run: bunx --bun @buddysh/buddy security
+`
   }
 }

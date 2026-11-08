@@ -1,39 +1,126 @@
-/* eslint-disable no-console, no-cond-assign */
+/* eslint-disable no-cond-assign, ts/no-require-imports */
+import type { GitProvider } from './git/provider'
+import type { Drift } from './scanner/resolution-drift'
+import type { AdvisoryQuery } from './services/security-advisories'
 import type {
-  BuddyBotConfig,
+  BuddyConfig,
   DashboardData,
   Issue,
+  IssueOptions,
   PackageFile,
   PackageUpdate,
   PullRequest,
   UpdateGroup,
   UpdateScanResult,
+  VulnerableDependency,
 } from './types'
 import fs from 'node:fs'
+import { join } from 'node:path'
 import process from 'node:process'
 import { DashboardGenerator } from './dashboard/dashboard-generator'
-import { GitHubProvider } from './git/github-provider'
+import { createProvider, supports } from './git/provider'
+import { formatError } from './utils/errors'
+import { evaluateAutoMerge, evaluateAutoMergeForUpdates, resolveAutoMergeConfig } from './pr/auto-merge'
 import { PullRequestGenerator } from './pr/pr-generator'
+import { manifestFiles, manifestUpdates, parseManifest } from './pr/pr-manifest'
+import { appendUpgradeReport } from './upgrades/wire'
+import { EventBus } from './events/bus'
+import { createSinks } from './events/sinks'
+import type { PackageRule } from './rules/engine'
+import { applyRules, groupsToRules, mergeGroupEffects, resolveRuleEffects, strategyAllows } from './rules/engine'
+import { applyTemplate, templateTokensForGroup } from './pr/templates'
 import { RegistryClient } from './registry/registry-client'
 import { PackageScanner } from './scanner/package-scanner'
 import { DeprecatedDependenciesChecker } from './services/deprecated-dependencies-checker'
-import { groupUpdates, sortUpdatesByPriority } from './utils/helpers'
-import { Logger } from './utils/logger'
+import { advisoryKey, SecurityAdvisoryService, toOsvEcosystem } from './services/security-advisories'
+import { getGitHubServerUrl } from './utils/endpoints'
+import { GitHubApiError } from './utils/errors'
+import { getUpdateType, groupUpdates, sortUpdatesByPriority } from './utils/helpers'
+import { Logger, setDefaultLogger } from './utils/logger'
+import { resolveRepositoryConfig } from './utils/repository'
+import { isBuddyBranch } from './utils/branches'
 
 export class Buddy {
   private readonly logger: Logger
   private readonly scanner: PackageScanner
   private readonly registryClient: RegistryClient
+  private eventBus: EventBus | null = null
   private readonly dashboardGenerator: DashboardGenerator
 
   constructor(
-    private readonly config: BuddyBotConfig,
+    private readonly config: BuddyConfig,
     private readonly projectPath: string = process.cwd(),
   ) {
-    this.logger = new Logger(config.verbose ?? false)
+    this.logger = new Logger(config.verbose ?? false, config.logLevel)
+
+    // Module-level helpers (dependency-file parsers, lock-file regeneration,
+    // the GitHub provider) have no instance to inject into, so they read the
+    // process-wide default. Setting it here means one `logLevel` governs every
+    // line buddy prints, including from library use.
+    setDefaultLogger(this.logger)
+
+    // Auto-detect repository owner/name if not configured
+    this.resolveRepositoryConfig()
+
     this.scanner = new PackageScanner(this.projectPath, this.logger, this.config.packages?.ignorePaths)
     this.registryClient = new RegistryClient(this.projectPath, this.logger, this.config)
     this.dashboardGenerator = new DashboardGenerator()
+  }
+
+  /**
+   * Analyse the major updates in a group before its pull request is opened.
+   *
+   * Everything here is opt-in and failure-tolerant: without
+   * `ai.majorUpgrades.enabled` and a provider key it returns nothing and the
+   * pull request is byte-identical to what it would have been. A failed
+   * analysis is reported as skipped rather than raised, because a missing
+   * report is a far smaller problem than a blocked dependency update.
+   *
+   * @param updates - Every update in the group, majors and otherwise
+   * @param files - Repository-relative paths the group touches
+   * @returns The report to splice into the body and the draft decision
+   */
+  private async analyzeMajors(
+    updates: PackageUpdate[],
+    files: string[],
+  ): Promise<{ report: string, draft: boolean }> {
+    if (!this.config.ai?.majorUpgrades?.enabled)
+      return { report: '', draft: false }
+
+    const { analyzeGroupMajors } = await import('./upgrades/wire')
+    const { createAiClient } = await import('./ai')
+
+    const { ReleaseNotesFetcher } = await import('./services/release-notes-fetcher')
+    const fetcher = new ReleaseNotesFetcher(this.logger)
+
+    const outcome = await analyzeGroupMajors({
+      updates,
+      config: this.config,
+      workspace: this.projectPath,
+      baseBranch: this.config.repository?.baseBranch || 'main',
+      files,
+      ai: createAiClient(this.config, this.logger),
+      fetchReleases: (name, from, to) => fetcher.fetchSpanReleases(name, from, to),
+      logger: this.logger,
+    })
+
+    return { report: outcome.report, draft: outcome.draft }
+  }
+
+  /**
+   * Reconcile the configured repository with GITHUB_REPOSITORY.
+   *
+   * Fills in an unset owner/name, and overrides a configured one that disagrees
+   * with the repository actually checked out — see `resolveRepositoryConfig` in
+   * `utils/repository` for why the environment wins.
+   */
+  private resolveRepositoryConfig(): void {
+    const resolution = resolveRepositoryConfig(this.config)
+
+    if (resolution.warning)
+      this.logger.warn(`⚠️ ${resolution.warning}`)
+    else if (resolution.source === 'environment')
+      this.logger.info(`Auto-detected repository: ${resolution.owner}/${resolution.name} from GITHUB_REPOSITORY`)
   }
 
   /**
@@ -45,12 +132,15 @@ export class Buddy {
 
     try {
       // Scan for package files
+      const scanStartTime = Date.now()
       const packageFiles = await this.scanner.scanProject()
+      this.logger.info(`⏱️  Package file scan took ${Date.now() - scanStartTime}ms`)
       const totalPackages = packageFiles.reduce((sum, file) => sum + file.dependencies.length, 0)
 
       // Get outdated packages from package.json using bun outdated
       let packageJsonUpdates: PackageUpdate[] = []
 
+      const bunOutdatedStartTime = Date.now()
       if (this.config.packages?.ignore && this.config.packages.ignore.length > 0) {
         // Get all updates first, then filter
         const allUpdates = await this.registryClient.getOutdatedPackages()
@@ -59,15 +149,83 @@ export class Buddy {
       else {
         packageJsonUpdates = await this.registryClient.getOutdatedPackages()
       }
+      this.logger.info(`⏱️  bun outdated check took ${Date.now() - bunOutdatedStartTime}ms (found ${packageJsonUpdates.length} updates)`)
 
-      // Get outdated packages from dependency files using ts-pkgx
+      // Get outdated packages from dependency files using ts-pantry
+      const depFilesStartTime = Date.now()
       const dependencyFileUpdates = await this.checkDependencyFilesForUpdates(packageFiles)
+      this.logger.info(`⏱️  Dependency file checks took ${Date.now() - depFilesStartTime}ms (found ${dependencyFileUpdates.length} updates)`)
 
       // Get outdated GitHub Actions
+      const actionsStartTime = Date.now()
       const githubActionsUpdates = await this.checkGitHubActionsForUpdates(packageFiles)
+      this.logger.info(`⏱️  GitHub Actions checks took ${Date.now() - actionsStartTime}ms (found ${githubActionsUpdates.length} updates)`)
+
+      // Get outdated Docker images
+      const dockerStartTime = Date.now()
+      const dockerUpdates = await this.checkDockerfilesForUpdates(packageFiles)
+      this.logger.info(`⏱️  Docker image checks took ${Date.now() - dockerStartTime}ms (found ${dockerUpdates.length} updates)`)
+
+      // Get outdated Zig dependencies
+      const zigStartTime = Date.now()
+      const zigUpdates = await this.checkZigForUpdates(packageFiles)
+
+      // Runtimes declared under `engines`. Both halves of this — resolving a
+      // newer runtime and rewriting the constraint — existed and were tested,
+      // and no scan step called either, so an engine was listed on the
+      // dashboard and never proposed. Opt-in, because bumping one is a
+      // deployment decision rather than a dependency one.
+      const engineUpdates = this.config.packages?.engines === true
+        ? await this.checkEnginesForUpdates(packageFiles)
+        : []
+      this.logger.info(`⏱️  Zig dependency checks took ${Date.now() - zigStartTime}ms (found ${zigUpdates.length} updates)`)
+
+      // pnpm catalogs are where the version lives in a workspace that uses
+      // them: every package.json says `catalog:`, so updating those files
+      // would write the protocol string over itself and change nothing.
+      const { scanCatalogs } = await import('./scanner/catalog-scan')
+      const catalogScan = await scanCatalogs(
+        this.projectPath,
+        name => this.registryClient.getLatestVersion(name),
+        {
+          ...(this.config.packages?.ignore ? { ignore: this.config.packages.ignore } : {}),
+          logger: this.logger,
+        },
+      )
+      if (catalogScan.entries.length > 0)
+        this.logger.info(`📦 pnpm catalogs: ${catalogScan.updates.length} update(s) across ${catalogScan.entries.length} entr(ies)`)
+
+      // Ecosystems behind the adapter interface: Python, Rust, Go and Ruby.
+      // These run as one pass rather than a method each, which is the point of
+      // the interface — a fifth ecosystem is a new module, not a new branch here.
+      const adapterStartTime = Date.now()
+      const { scanEcosystems } = await import('./ecosystems/scan')
+      const adapterScan = await scanEcosystems({
+        dir: this.projectPath,
+        ...(this.config.packages?.includePrerelease !== undefined
+          ? { includePrerelease: this.config.packages.includePrerelease }
+          : {}),
+        ...(this.config.packages?.ignore ? { ignore: this.config.packages.ignore } : {}),
+        logger: this.logger,
+      })
+      if (adapterScan.manifests.length > 0) {
+        this.logger.info(
+          `⏱️  Ecosystem checks took ${Date.now() - adapterStartTime}ms `
+          + `(found ${adapterScan.updates.length} updates across ${adapterScan.manifests.map(entry => entry.ecosystem).join(', ')})`,
+        )
+      }
 
       // Merge all updates
-      let updates = [...packageJsonUpdates, ...dependencyFileUpdates, ...githubActionsUpdates]
+      let updates = [
+        ...packageJsonUpdates,
+        ...dependencyFileUpdates,
+        ...githubActionsUpdates,
+        ...dockerUpdates,
+        ...zigUpdates,
+        ...engineUpdates,
+        ...adapterScan.updates,
+        ...catalogScan.updates,
+      ]
 
       // Apply ignore filter to dependency file updates
       if (this.config.packages?.ignore && this.config.packages.ignore.length > 0) {
@@ -75,17 +233,48 @@ export class Buddy {
       }
 
       // Apply update strategy filtering
+      const strategyStartTime = Date.now()
       if (this.config.packages?.strategy) {
         updates = this.filterUpdatesByStrategy(updates, this.config.packages.strategy)
       }
+      this.logger.info(`⏱️  Strategy filtering took ${Date.now() - strategyStartTime}ms`)
+
+      // Apply minimum release age filtering
+      const ageFilterStartTime = Date.now()
+      updates = await this.filterUpdatesByMinimumReleaseAge(updates)
+      this.logger.info(`⏱️  Minimum release age filtering took ${Date.now() - ageFilterStartTime}ms`)
+
+      // Hold pinned packages at their configured version. Applied after all
+      // sources have contributed, so a pin covers every ecosystem rather than
+      // only package.json.
+      updates = this.applyPins(updates)
+
+      // Drop updates an `overrides`/`resolutions` entry would defeat at
+      // install time. Applied after pins so both hold-backs are in one place.
+      updates = await this.dropOverriddenUpdates(updates, packageFiles)
+
+      // Package rules run last among the filters, so a rule can override what
+      // the global strategy allowed rather than being overridden by it.
+      updates = this.applyPackageRules(updates)
+
+      // Annotate updates that resolve known vulnerabilities, before sorting so
+      // the priority sort can float them to the top.
+      const advisoryStartTime = Date.now()
+      updates = await this.annotateSecurityAdvisories(updates)
+      this.logger.info(`⏱️  Security advisory lookup took ${Date.now() - advisoryStartTime}ms`)
 
       // Sort updates by priority
-      updates = sortUpdatesByPriority(updates)
+      const prioritizeSecurity = this.config.security?.prioritize ?? true
+      const sortStartTime = Date.now()
+      updates = sortUpdatesByPriority(updates, { prioritizeSecurity })
+      this.logger.info(`⏱️  Sorting took ${Date.now() - sortStartTime}ms`)
 
       // Group updates
+      const groupStartTime = Date.now()
       const groups = this.config.packages?.groups
         ? this.groupUpdatesByConfig(updates)
-        : groupUpdates(updates)
+        : groupUpdates(updates, { prioritizeSecurity })
+      this.logger.info(`⏱️  Grouping took ${Date.now() - groupStartTime}ms`)
 
       const scanDuration = Date.now() - startTime
 
@@ -98,6 +287,14 @@ export class Buddy {
       }
 
       this.logger.success(`Scan completed in ${scanDuration}ms. Found ${updates.length} updates.`)
+
+      await this.events.emit('scan.completed', {
+        total: updates.length,
+        major: updates.filter(update => update.updateType === 'major').length,
+        minor: updates.filter(update => update.updateType === 'minor').length,
+        patch: updates.filter(update => update.updateType === 'patch').length,
+      })
+
       return result
     }
     catch (error) {
@@ -107,69 +304,447 @@ export class Buddy {
   }
 
   /**
+   * Apply `pullRequest.titleFormat` to a group's generated title.
+   *
+   * @param group - Group backing the pull request
+   * @returns The configured title, or the generated one when no template is set
+   */
+  private prTitleFor(group: UpdateGroup): string {
+    const template = this.config.pullRequest?.titleFormat
+    if (!template)
+      return group.title
+
+    return applyTemplate(
+      template,
+      templateTokensForGroup(group, { title: group.title }, this.config.packages?.strategy),
+    )
+  }
+
+  /**
+   * Apply `pullRequest.commitMessageFormat` to a group's commit message.
+   *
+   * @param group - Group backing the commit
+   * @param suffix - Lifecycle marker such as `(rebased)`, appended after the
+   * template so a custom format cannot lose it
+   */
+  private commitMessageFor(group: UpdateGroup, suffix?: string): string {
+    const template = this.config.pullRequest?.commitMessageFormat
+    const base = template
+      ? applyTemplate(
+          template,
+          templateTokensForGroup(group, { message: group.title, title: group.title }, this.config.packages?.strategy),
+        )
+      : group.title
+
+    return suffix ? `${base} ${suffix}` : base
+  }
+
+  /**
+   * Apply `packages.rules` to the candidate updates.
+   *
+   * Legacy `packages.groups` are compiled into rules first, so grouping has a
+   * single code path rather than two mechanisms that can disagree.
+   *
+   * @param updates - Candidate updates
+   * @returns Updates that survived every matching rule
+   */
+  private applyPackageRules(updates: PackageUpdate[]): PackageUpdate[] {
+    const configured = this.config.packages?.rules ?? []
+    const compiled = groupsToRules(this.config.packages?.groups)
+    const rules = [...compiled, ...configured]
+
+    if (rules.length === 0)
+      return updates
+
+    const applied = applyRules(updates, rules)
+
+    if (applied.length < updates.length)
+      this.logger.info(`📋 Package rules dropped ${updates.length - applied.length} update(s)`)
+
+    // Effects are recomputed where they are needed (labels, reviewers,
+    // grouping) rather than threaded through every downstream signature.
+    return applied.map(entry => entry.update)
+  }
+
+  /** Union configured values with rule-supplied ones, dropping duplicates. */
+  private static mergeUnique(configured: string[] | undefined, fromRules: string[]): string[] | undefined {
+    const merged = [...new Set([...(configured ?? []), ...fromRules])]
+    // Undefined rather than empty: the provider treats an empty array as an
+    // explicit request for no reviewers.
+    return merged.length > 0 ? merged : undefined
+  }
+
+  /**
+   * Every label a pull request for this group should carry.
+   *
+   * Four sources union here: the automatic set derived from the update types
+   * and manifests in the group, `security.label` when the group resolves a
+   * published advisory, whatever `pullRequest.labels` declares, and the labels
+   * any matching rule asked for.
+   *
+   * The security label matters beyond decoration: the `security-only`
+   * auto-merge condition tests for it, so a group that resolves an advisory
+   * could never satisfy that condition while nothing applied the label.
+   *
+   * Centralised because the five call sites had drifted — only the creation
+   * path folded in rule labels, so refreshing an existing pull request quietly
+   * dropped them, and `pullRequest.labels` was read by nothing at all despite
+   * being declared and validated.
+   *
+   * @param group - Updates the pull request will contain
+   * @param prGenerator - Generator supplying the automatic labels
+   * @returns Labels to set on the pull request
+   */
+  private labelsFor(group: UpdateGroup, prGenerator: PullRequestGenerator): string[] {
+    // Label groups that actually resolve a published advisory. This once
+    // matched a hardcoded list of security-adjacent package names, which both
+    // missed every real vulnerability outside that list and mislabelled
+    // routine updates to packages that merely sound security-related.
+    const resolvesAdvisory = group.updates.some(update => (update.securityAdvisories?.length ?? 0) > 0)
+
+    return [...new Set([
+      ...prGenerator.generateLabels(group),
+      ...(resolvesAdvisory ? [this.config.security?.label ?? 'security'] : []),
+      ...(this.config.pullRequest?.labels ?? []),
+      ...this.groupEffectsFor(group.updates).labels,
+    ])]
+  }
+
+  /** Every rule governing this run, legacy groups compiled in first. */
+  private activeRules(): PackageRule[] {
+    return [...groupsToRules(this.config.packages?.groups), ...(this.config.packages?.rules ?? [])]
+  }
+
+  /**
+   * Merge the rule effects of every update in a group.
+   *
+   * Effects are recomputed here rather than threaded through the scan result,
+   * because the scan and the pull request can be separated by a rebase run
+   * that never saw the original resolution.
+   *
+   * @param updates - Updates the pull request will contain
+   */
+  private groupEffectsFor(updates: PackageUpdate[]): ReturnType<typeof mergeGroupEffects> {
+    const rules = this.activeRules()
+    if (rules.length === 0)
+      return mergeGroupEffects([])
+
+    return mergeGroupEffects(updates.map(update => resolveRuleEffects(update, rules)))
+  }
+
+  /**
+   * Order groups so the highest-priority ones are created first.
+   *
+   * Applied before the per-run cap, since a priority that only reordered the
+   * pull requests already fitting under the cap would be decorative. Ties keep
+   * their original order, so an unprioritised configuration is unaffected.
+   *
+   * @param groups - Groups in scan order
+   */
+  private orderGroupsByPriority(groups: UpdateGroup[]): UpdateGroup[] {
+    const rules = this.activeRules()
+    if (rules.length === 0)
+      return groups
+
+    return groups
+      .map((group, index) => ({ group, index, priority: this.groupEffectsFor(group.updates).prPriority }))
+      .sort((a, b) => b.priority - a.priority || a.index - b.index)
+      .map(entry => entry.group)
+  }
+
+  /**
+   * Drop updates that an `overrides` or `resolutions` entry would defeat.
+   *
+   * A package pinned by an override cannot be updated by editing the
+   * dependency that declares it — the override wins at install time
+   * regardless. Proposing one anyway produces a pull request that changes
+   * `package.json`, passes CI, merges, and installs exactly the same tree as
+   * before. That is worse than no pull request, because it looks like
+   * progress.
+   *
+   * @param updates - Candidate updates
+   * @param packageFiles - Manifests already scanned
+   * @returns Updates no override holds back
+   */
+  private async dropOverriddenUpdates(
+    updates: PackageUpdate[],
+    packageFiles: PackageFile[],
+  ): Promise<PackageUpdate[]> {
+    const manifests = packageFiles.filter(file => file.type === 'package.json')
+    if (manifests.length === 0)
+      return updates
+
+    const { collectResolutionPins, pinBlocksUpdate } = await import('./scanner/package-json-extras')
+
+    const pins = new Map<string, { version: string, field: string }>()
+
+    for (const manifest of manifests) {
+      try {
+        for (const pin of collectResolutionPins(JSON.parse(manifest.content)))
+          pins.set(pin.name, { version: pin.version, field: pin.field })
+      }
+      catch {
+        // A manifest that does not parse was already reported by the scanner.
+        continue
+      }
+    }
+
+    if (pins.size === 0)
+      return updates
+
+    return updates.filter((update) => {
+      const pin = pins.get(update.name)
+      if (!pin)
+        return true
+
+      // Only an override that actually excludes the new version holds it
+      // back; one whose range already admits it is not in the way.
+      if (!pinBlocksUpdate({ name: update.name, version: pin.version, field: pin.field }, update.newVersion))
+        return true
+
+      this.logger.info(
+        `🔒 Skipping ${update.name} → ${update.newVersion}: `
+        + `${pin.field} pins it to ${pin.version}, which would win at install time`,
+      )
+      return false
+    })
+  }
+
+  /**
+   * Hold pinned packages at the version named in `packages.pin`.
+   *
+   * A pin is a ceiling *and* a floor: an update that would move a package past
+   * its pin is dropped, and a package sitting somewhere other than its pin
+   * gets an update proposed that brings it back — which is what makes a pin
+   * enforceable rather than merely advisory. A pin covering a package that is
+   * also ignored has no effect, since ignored packages never reach here.
+   *
+   * @param updates - Candidate updates from all sources
+   * @returns Updates with pinned packages dropped or retargeted
+   */
+  private applyPins(updates: PackageUpdate[]): PackageUpdate[] {
+    const pins = this.config.packages?.pin
+    if (!pins || Object.keys(pins).length === 0)
+      return updates
+
+    const result: PackageUpdate[] = []
+
+    for (const update of updates) {
+      const pinned = pins[update.name]
+      if (!pinned) {
+        result.push(update)
+        continue
+      }
+
+      if (update.currentVersion === pinned) {
+        this.logger.info(`📌 ${update.name} is pinned to ${pinned}, skipping update to ${update.newVersion}`)
+        continue
+      }
+
+      // The package drifted off its pin — propose moving it back instead of
+      // to the latest version.
+      this.logger.info(`📌 ${update.name} is pinned to ${pinned}, retargeting update from ${update.newVersion}`)
+      result.push({
+        ...update,
+        newVersion: pinned,
+        updateType: getUpdateType(update.currentVersion, pinned),
+      })
+    }
+
+    return result
+  }
+
+  /**
+   * Attach known-vulnerability data to updates that resolve an advisory.
+   *
+   * Failures are swallowed deliberately: OSV being unreachable should degrade
+   * the annotations, not block a dependency update run that is otherwise fine.
+   *
+   * @param updates - Candidate updates
+   * @returns The same updates, annotated in place where advisories apply
+   */
+  private async annotateSecurityAdvisories(updates: PackageUpdate[]): Promise<PackageUpdate[]> {
+    if (this.config.security?.enabled === false || updates.length === 0)
+      return updates
+
+    try {
+      const service = new SecurityAdvisoryService(this.logger)
+      const annotated = await service.annotateUpdates(
+        updates,
+        this.config.security?.minimumSeverity ?? 'low',
+      )
+
+      const flagged = annotated.filter(update => update.securityAdvisories?.length)
+      if (flagged.length > 0) {
+        await this.events.emit('security.advisories', {
+          packages: flagged.map(update => ({
+            name: update.name,
+            severity: update.securityAdvisories?.[0]?.severity ?? 'unknown',
+          })),
+        })
+      }
+
+      return annotated
+    }
+    catch (error) {
+      this.logger.warn('Security advisory lookup failed, continuing without it:', error)
+      return updates
+    }
+  }
+
+  /**
    * Create pull requests for updates
    */
   async createPullRequests(scanResult: UpdateScanResult): Promise<void> {
+    const prStartTime = Date.now()
     this.logger.info('Creating pull requests for updates...')
 
     try {
       // Check if repository is configured
       if (!this.config.repository) {
         this.logger.error('❌ Repository configuration required for PR creation')
-        this.logger.info('Configure repository.provider, repository.owner, repository.name in buddy-bot.config.ts')
+        this.logger.info('Configure repository.provider, repository.owner, repository.name in buddy.config.ts')
         return
       }
 
-      // Get GitHub token from environment (prefer BUDDY_BOT_TOKEN for full permissions)
-      const token = process.env.BUDDY_BOT_TOKEN || process.env.GITHUB_TOKEN
-      if (!token) {
-        this.logger.error('❌ GITHUB_TOKEN or BUDDY_BOT_TOKEN environment variable required for PR creation')
+      if (!this.config.repository.owner || !this.config.repository.name) {
+        this.logger.error('❌ Repository owner and name are required for PR creation')
+        this.logger.info('Set them in buddy.config.ts or ensure GITHUB_REPOSITORY env var is available')
         return
       }
 
-      // Determine if we have workflow permissions (BUDDY_BOT_TOKEN has full permissions)
-      const hasWorkflowPermissions = !!process.env.BUDDY_BOT_TOKEN
+      // Use GITHUB_TOKEN for all operations — this ensures commits and PRs are
+      // attributed to github-actions[bot] instead of polluting a personal account's
+      // contribution graph. The PAT is only passed separately, for workflow
+      // file updates and for repositories that forbid GITHUB_TOKEN from opening
+      // pull requests. Workflows generated before the rename call it
+      // BUDDY_BOT_TOKEN, so that is read too.
+      const token = process.env.GITHUB_TOKEN
+      const workflowToken = process.env.BUDDY_TOKEN || process.env.BUDDY_BOT_TOKEN
+      if (!token && !workflowToken) {
+        this.logger.error('❌ GITHUB_TOKEN or BUDDY_TOKEN environment variable required for PR creation')
+        return
+      }
 
-      if (process.env.BUDDY_BOT_TOKEN) {
-        console.log('✅ BUDDY_BOT_TOKEN detected - workflow permissions enabled')
-        console.log(`🔑 Token length: ${process.env.BUDDY_BOT_TOKEN.length} characters`)
+      // Use GITHUB_TOKEN as primary (github-actions[bot] attribution), fall back to PAT
+      const primaryToken = token || workflowToken!
+      const hasWorkflowPermissions = !!workflowToken
+
+      if (workflowToken) {
+        this.logger.info('✅ BUDDY_TOKEN detected - workflow file permissions enabled')
       }
       else {
-        console.log('⚠️ BUDDY_BOT_TOKEN not found - workflow permissions disabled')
-        console.log('💡 Ensure BUDDY_BOT_TOKEN is properly configured in GitHub secrets')
-        // eslint-disable-next-line no-template-curly-in-string
-        console.log('💡 The workflow should set: env: BUDDY_BOT_TOKEN: ${{ secrets.BUDDY_BOT_TOKEN }}')
+        this.logger.info('ℹ️ No BUDDY_TOKEN — workflow file updates will be skipped')
       }
 
-      // Initialize GitHub provider
-      const gitProvider = new GitHubProvider(
-        token,
-        this.config.repository.owner,
-        this.config.repository.name,
-        hasWorkflowPermissions,
-      )
+      // Primary token for API calls, optional workflow token for elevated
+      // permissions. The factory decides which implementation to build.
+      const gitProvider = await createProvider({
+        provider: this.config.repository.provider,
+        owner: this.config.repository.owner,
+        name: this.config.repository.name,
+        token: primaryToken,
+        ...(workflowToken ? { workflowToken } : {}),
+        ...(this.config.repository.apiUrl ? { apiUrl: this.config.repository.apiUrl } : {}),
+      }, { logger: this.logger })
 
       // Initialize PR generator with config
       const prGenerator = new PullRequestGenerator(this.config)
 
+      // Rate limiting: cap the number of PRs created per run to prevent flooding
+      const maxPRsPerRun = this.config.maxPRsPerRun ?? 10
+      let prsCreatedThisRun = 0
+
+      // Ordered before the cap, not after: a `prPriority` that only reordered
+      // the PRs that already fit would not do the one thing it is for.
+      const orderedGroups = this.orderGroupsByPriority(scanResult.groups)
+
+      const failedGroups: { name: string, error: unknown }[] = []
+
       // Process each group
-      for (const group of scanResult.groups) {
+      for (const group of orderedGroups) {
         try {
+          const groupStartTime = Date.now()
           this.logger.info(`Creating PR for group: ${group.name} (${group.updates.length} updates)`)
 
+          // (#1359) Groups that only touch .github/workflows/* require BUDDY_TOKEN
+          // with the `workflow` scope — GITHUB_TOKEN can't push to workflow files,
+          // and the PR-creation API call also fails ("GitHub Actions is not permitted
+          // to create or approve pull requests"). Without elevated permissions, the
+          // run would create a branch + empty commit and then fail to open the PR,
+          // leaving an orphan. Detect-and-skip so no branch ops happen.
+          const isWorkflowOnlyGroup = group.updates.length > 0
+            && group.updates.every(u => u.file.includes('.github/workflows/'))
+          if (isWorkflowOnlyGroup && !hasWorkflowPermissions) {
+            this.logger.warn(`⚠️ Skipping group ${group.name} — workflow-file updates require BUDDY_TOKEN with the workflow scope`)
+            continue
+          }
+
+          // (#1360) For pantry/pkgx-style deps, generateAllFileUpdates may
+          // legitimately return [] (no JS lock/yaml writer for that dep type).
+          // The branch-ops paths below would then delete + recreate the branch
+          // and skip PR creation, leaving a fresh orphan every run. Check for
+          // actual file changes up front and skip the whole group if there's
+          // nothing to commit. File generation reads the current working tree,
+          // so first reset to base in case a previous group iteration left us
+          // on its branch.
+          try {
+            const { spawn } = await import('node:child_process')
+            const runGitCommand = (command: string, args: string[]): Promise<void> => {
+              return new Promise((resolve, reject) => {
+                const child = spawn(command, args, { stdio: 'pipe' })
+                child.on('close', code => code === 0 ? resolve() : reject(new Error(`Git command failed with code ${code}`)))
+                child.on('error', reject)
+              })
+            }
+            const baseBranch = this.config.repository.baseBranch || 'main'
+            await runGitCommand('git', ['checkout', baseBranch])
+            await runGitCommand('git', ['reset', '--hard', 'HEAD'])
+            await runGitCommand('git', ['clean', '-fd'])
+          }
+          catch (resetError) {
+            this.logger.warn(`⚠️ Failed to reset to clean state for early file-change check, continuing anyway:`, resetError)
+          }
+
+          const earlyFileUpdates = await this.generateAllFileUpdates(group.updates)
+          if (earlyFileUpdates.length === 0) {
+            this.logger.info(`ℹ️ No file changes for group ${group.name}, skipping — leaving branches untouched`)
+            continue
+          }
+
           // Generate PR content first to check for existing PRs
-          const prTitle = group.title
-          const prBody = await prGenerator.generateBody(group)
+          const prTitle = this.prTitleFor(group)
+          const prBodyStartTime = Date.now()
+          const generatedBody = await prGenerator.generateBody(group)
+          const prBodyDuration = Date.now() - prBodyStartTime
+          this.logger.info(`⏱️  PR body generation took ${prBodyDuration}ms`)
+
+          // Analyse major upgrades when configured. Returns nothing without an
+          // AI provider, so the PR is byte-identical to before in that case.
+          const upgrade = await this.analyzeMajors(group.updates, earlyFileUpdates.map(change => change.path))
+          const prBody = appendUpgradeReport(generatedBody, upgrade.report)
 
           // Check for existing open PRs with similar content
           const existingPRs = await gitProvider.getPullRequests('open')
-          const branchPattern = `buddy-bot/update-${group.name.toLowerCase().replace(/\s+/g, '-')}-`
+
+          // Generate the deterministic branch name for this group
+          const expectedBranchName = this.generateBranchName(group)
+
+          // Also support legacy branch names with timestamps for backwards compatibility
+          const legacyBranchPattern = `buddy/update-${group.name.toLowerCase().replace(/\s+/g, '-')}-`
 
           const existingPR = existingPRs.find(pr =>
-            (pr.title === prTitle
-              || pr.head.startsWith(branchPattern)
-              || this.isSimilarPRTitle(pr.title, prTitle))
-            && (pr.author === 'github-actions[bot]' || pr.author.includes('buddy') || pr.head.startsWith('buddy-bot/'))
+            (
+              // Primary match: exact branch name match (new deterministic naming)
+              pr.head === expectedBranchName
+              // Secondary match: title match
+              || pr.title === prTitle
+              // Tertiary match: legacy branch pattern with timestamp
+              || pr.head.startsWith(legacyBranchPattern)
+              // Quaternary match: similar titles (for grouped updates)
+              || this.isSimilarPRTitle(pr.title, prTitle)
+            )
+            && (pr.author === 'github-actions[bot]' || pr.author.includes('buddy') || isBuddyBranch(pr.head))
             && !pr.head.includes('renovate/') // Exclude Renovate PRs
             && !pr.head.includes('dependabot/') // Exclude Dependabot PRs
             && !pr.author.toLowerCase().includes('renovate') // Exclude Renovate bot
@@ -182,11 +757,28 @@ export class Buddy {
             // Check if this PR should be auto-closed due to respectLatest config changes
             const shouldAutoClose = this.shouldAutoClosePR(existingPR, group.updates)
             if (shouldAutoClose) {
-              this.logger.info(`🔒 Auto-closing PR #${existingPR.number} due to respectLatest config change`)
+              this.logger.info(`🔒 Auto-closing PR #${existingPR.number} due to config change`)
               try {
+                // Always add an explanatory comment before closing so users can debug
+                const closeReason = this.generateCloseReason(existingPR)
+                try {
+                  await gitProvider.createComment(existingPR.number, closeReason)
+                }
+                catch (commentError) {
+                  this.logger.warn(`⚠️ Could not add close reason comment to PR #${existingPR.number}:`, commentError)
+                }
+
                 await gitProvider.closePullRequest(existingPR.number)
-                await gitProvider.deleteBranch(existingPR.head)
-                this.logger.success(`✅ Auto-closed PR #${existingPR.number} and deleted branch ${existingPR.head}`)
+                await this.events.emit('pr.closed', { number: existingPR.number, title: existingPR.title, reason: 'no longer produced by the current configuration' })
+                // The pull request is closed either way; a branch that would
+                // not delete is worth a warning, not a failed run.
+                try {
+                  await gitProvider.deleteBranch(existingPR.head)
+                  this.logger.success(`✅ Auto-closed PR #${existingPR.number} and deleted branch ${existingPR.head}`)
+                }
+                catch (deleteError) {
+                  this.logger.warn(`⚠️ Auto-closed PR #${existingPR.number} but could not delete ${existingPR.head}:`, deleteError)
+                }
                 continue
               }
               catch (error) {
@@ -198,11 +790,27 @@ export class Buddy {
             // Check if the updates are the same by comparing package lists
             const existingUpdatesMatch = this.checkIfUpdatesMatch(existingPR.body, group.updates)
 
-            if (existingUpdatesMatch) {
+            // Matching updates are not enough: a pull request whose manifests
+            // changed without the lock files they require (opened before
+            // pantry.lock was regenerated, say) fails CI until refreshed.
+            let missing: string[] = []
+            if (existingUpdatesMatch && gitProvider.getPullRequestFiles) {
+              try {
+                const { missingLockFiles } = await import('./utils/lock-file')
+                missing = missingLockFiles(await gitProvider.getPullRequestFiles(existingPR.number))
+              }
+              catch (error) {
+                this.logger.warn(`⚠️ Could not list the files of PR #${existingPR.number}; trusting it: ${formatError(error)}`)
+              }
+            }
+
+            if (existingUpdatesMatch && missing.length === 0) {
               this.logger.info(`✅ Existing PR has the same updates, skipping creation`)
               continue
             }
             else {
+              if (missing.length > 0)
+                this.logger.info(`🔒 PR #${existingPR.number} has the same updates but does not regenerate ${missing.join(', ')}; refreshing it`)
               this.logger.info(`🔄 Updates differ, will update existing PR with new content`)
 
               // Get the existing branch name from the PR
@@ -229,10 +837,10 @@ export class Buddy {
                 await runGitCommand('git', ['reset', '--hard', 'HEAD'])
                 await runGitCommand('git', ['clean', '-fd'])
 
-                console.log(`🧹 Reset to clean main state before updating existing PR ${existingPR.number}`)
+                this.logger.info(`🧹 Reset to clean main state before updating existing PR ${existingPR.number}`)
               }
               catch (error) {
-                console.warn(`⚠️ Failed to reset to clean state, continuing anyway:`, error)
+                this.logger.warn(`⚠️ Failed to reset to clean state, continuing anyway:`, error)
               }
 
               // Regenerate file updates with latest dependency versions
@@ -245,15 +853,36 @@ export class Buddy {
               else {
                 this.logger.info(`📝 Regenerated ${packageJsonUpdates.length} file changes for existing PR ${existingPR.number}`)
 
-                // Commit the updated changes to the existing branch
-                // This will overwrite the old file content with the new versions
-                await gitProvider.commitChanges(existingBranchName, `${group.title} (updated)`, packageJsonUpdates)
+                // Always call commitChanges to recreate branch from base (Renovate-style)
+                // This keeps the PR branch up-to-date even when file content is identical
+                try {
+                  const { hasBranchDifferences } = await import('./utils/git')
+                  const changed = await hasBranchDifferences(packageJsonUpdates, existingBranchName)
 
-                this.logger.success(`✅ Updated files in branch ${existingBranchName} with latest dependency versions`)
+                  if (!changed) {
+                    this.logger.info(`ℹ️ No content differences for ${existingBranchName}; recreating from ${this.config.repository.baseBranch || 'main'} with same dependency changes to keep branch up-to-date`)
+                    // IMPORTANT: Still pass the full file list, NOT empty [].
+                    // After resetting to base, the dependency changes need to be reapplied.
+                    // Passing [] would make the branch identical to main → GitHub auto-closes the PR.
+                    await gitProvider.commitChanges(existingBranchName, this.commitMessageFor(group, '(rebased)'), packageJsonUpdates, this.config.repository.baseBranch || 'main')
+                    this.logger.success(`✅ Recreated ${existingBranchName} from ${this.config.repository.baseBranch || 'main'} (dependency versions unchanged)`)
+                  }
+                  else {
+                    // Recreate the branch from base and apply updated changes (Renovate-style)
+                    await gitProvider.commitChanges(existingBranchName, this.commitMessageFor(group, '(updated)'), packageJsonUpdates, this.config.repository.baseBranch || 'main')
+                    this.logger.success(`✅ Recreated branch ${existingBranchName} with latest dependency versions`)
+                  }
+                }
+                catch (cmpErr) {
+                  // If the comparison fails for any reason, fall back to committing (previous behavior)
+                  this.logger.warn(`⚠️ Failed to compare branch content, proceeding with commit:`, cmpErr)
+                  await gitProvider.commitChanges(existingBranchName, this.commitMessageFor(group, '(updated)'), packageJsonUpdates, this.config.repository.baseBranch || 'main')
+                  this.logger.success(`✅ Recreated branch ${existingBranchName} with latest dependency versions`)
+                }
               }
 
               // Generate dynamic labels for the update
-              const dynamicLabels = prGenerator.generateLabels(group)
+              const dynamicLabels = this.labelsFor(group, prGenerator)
 
               // Update existing PR with new content
               await gitProvider.updatePullRequest(existingPR.number, {
@@ -261,18 +890,186 @@ export class Buddy {
                 body: prBody,
                 labels: dynamicLabels,
                 reviewers: this.config.pullRequest?.reviewers,
+            teamReviewers: this.config.pullRequest?.teamReviewers,
                 assignees: this.config.pullRequest?.assignees,
               })
 
+              await this.events.emit('pr.updated', { number: existingPR.number, title: prTitle, url: existingPR.url })
               this.logger.success(`✅ Updated existing PR #${existingPR.number}: ${prTitle}`)
               this.logger.info(`🔗 ${existingPR.url}`)
               continue
             }
           }
 
-          // Generate unique branch name
-          const timestamp = Date.now()
-          const branchName = `buddy-bot/update-${group.name.toLowerCase().replace(/\s+/g, '-')}-${timestamp}`
+          // Rate limit: stop creating new PRs if we've hit the cap for this run
+          if (prsCreatedThisRun >= maxPRsPerRun) {
+            this.logger.warn(`⚠️ Rate limit reached: already created ${prsCreatedThisRun} PRs this run (max: ${maxPRsPerRun}). Skipping remaining groups.`)
+            break
+          }
+
+          // Generate deterministic branch name (no timestamp - allows reuse of existing branches)
+          const branchName = this.generateBranchName(group)
+
+          // Check if branch already exists and has an open PR
+          // This prevents creating duplicate PRs when the detection above failed
+          const existingBranch = await gitProvider.branchExists(branchName)
+
+          if (existingBranch) {
+            this.logger.info(`🔄 Branch ${branchName} already exists, checking for associated PR...`)
+
+            // Re-check for existing PR with this exact branch name
+            const existingPRForBranch = existingPRs.find(pr => pr.head === branchName)
+
+            if (existingPRForBranch) {
+              this.logger.info(`✅ Found existing PR #${existingPRForBranch.number} for branch ${branchName}, updating it...`)
+
+              // Update the existing PR instead of creating a new one (Renovate-style: recreate from base)
+              const packageJsonUpdates = await this.generateAllFileUpdates(group.updates)
+              if (packageJsonUpdates.length > 0) {
+                await gitProvider.commitChanges(branchName, this.commitMessageFor(group, '(updated)'), packageJsonUpdates, this.config.repository.baseBranch || 'main')
+              }
+
+              const dynamicLabels = this.labelsFor(group, prGenerator)
+              await gitProvider.updatePullRequest(existingPRForBranch.number, {
+                title: prTitle,
+                body: prBody,
+                labels: dynamicLabels,
+                reviewers: this.config.pullRequest?.reviewers,
+            teamReviewers: this.config.pullRequest?.teamReviewers,
+                assignees: this.config.pullRequest?.assignees,
+              })
+
+              await this.events.emit('pr.updated', { number: existingPRForBranch.number, title: prTitle, url: existingPRForBranch.url })
+              this.logger.success(`✅ Updated existing PR #${existingPRForBranch.number}: ${prTitle}`)
+              this.logger.info(`🔗 ${existingPRForBranch.url}`)
+              continue
+            }
+
+            // Branch exists but no open PR — check for recently-closed PR to reopen
+            // This prevents creating duplicates when a PR was incorrectly auto-closed
+            let reopened = false
+            try {
+              // A provider that cannot reopen has no reuse path at all — on
+              // Bitbucket a declined pull request is final. Not looking is what
+              // sends it down the create-fresh branch below.
+              const closedPRs = supports(gitProvider, 'reopenPullRequests', 'reopenPullRequest')
+                ? await gitProvider.getPullRequests('closed')
+                : []
+              const recentlyClosed = closedPRs.find((pr) => {
+                if (pr.head !== branchName)
+                  return false
+                // Only consider PRs closed within the last 24 hours that weren't merged
+                if (pr.mergedAt)
+                  return false
+                const closedAgo = Date.now() - (pr.updatedAt?.getTime() ?? 0)
+                const twentyFourHours = 24 * 60 * 60 * 1000
+                return closedAgo < twentyFourHours
+              })
+
+              if (recentlyClosed) {
+                this.logger.info(`🔄 Found recently-closed PR #${recentlyClosed.number} for branch ${branchName}, reopening...`)
+
+                // Update the branch with fresh changes before reopening
+                const packageJsonUpdates = await this.generateAllFileUpdates(group.updates)
+                if (packageJsonUpdates.length > 0) {
+                  await gitProvider.commitChanges(branchName, this.commitMessageFor(group, '(reopened)'), packageJsonUpdates, this.config.repository.baseBranch || 'main')
+                }
+
+                await gitProvider.reopenPullRequest!(recentlyClosed.number)
+                const dynamicLabels = this.labelsFor(group, prGenerator)
+                await gitProvider.updatePullRequest(recentlyClosed.number, {
+                  title: prTitle,
+                  body: prBody,
+                  labels: dynamicLabels,
+                  reviewers: this.config.pullRequest?.reviewers,
+            teamReviewers: this.config.pullRequest?.teamReviewers,
+                  assignees: this.config.pullRequest?.assignees,
+                })
+
+                await this.events.emit('pr.updated', { number: recentlyClosed.number, title: prTitle, url: recentlyClosed.url })
+                this.logger.success(`✅ Reopened and updated PR #${recentlyClosed.number}: ${prTitle}`)
+                this.logger.info(`🔗 ${recentlyClosed.url}`)
+                reopened = true
+              }
+            }
+            catch (reopenError) {
+              this.logger.warn(`⚠️ Failed to check/reopen closed PRs:`, reopenError)
+            }
+
+            if (reopened)
+              continue
+
+            // Branch exists but no open or reopenable PR - delete the orphaned branch and create fresh
+            this.logger.info(`🧹 Branch ${branchName} exists but has no open PR, cleaning up...`)
+            try {
+              await gitProvider.deleteBranch(branchName)
+            }
+            catch (deleteError) {
+              this.logger.warn(`⚠️ Failed to delete orphaned branch ${branchName}:`, deleteError)
+            }
+          }
+
+          // Before creating a fresh PR, check if there's a recently-closed PR
+          // for this same update (even if the branch was deleted).  This catches
+          // the case where checkAndCloseSatisfiedPRs incorrectly closed a PR and
+          // deleted its branch — we reopen instead of creating a duplicate.
+          let reopenedFromClosed = false
+          try {
+            // Same gate as above: with no reopen there is no reuse path.
+            const closedPRs = supports(gitProvider, 'reopenPullRequests', 'reopenPullRequest')
+              ? await gitProvider.getPullRequests('closed')
+              : []
+            const recentlyClosed = closedPRs.find((pr) => {
+              // Match by branch name or similar title
+              if (pr.head !== branchName && !this.isSimilarPRTitle(pr.title, prTitle))
+                return false
+              // Must be a buddy PR
+              if (!isBuddyBranch(pr.head) && pr.author !== 'github-actions[bot]')
+                return false
+              // Must not have been merged
+              if (pr.mergedAt)
+                return false
+              // Only consider PRs closed within the last 7 days
+              const closedAgo = Date.now() - (pr.updatedAt?.getTime() ?? 0)
+              const sevenDays = 7 * 24 * 60 * 60 * 1000
+              return closedAgo < sevenDays
+            })
+
+            if (recentlyClosed) {
+              this.logger.info(`🔄 Found recently-closed PR #${recentlyClosed.number} (branch may have been deleted), recreating branch and reopening...`)
+
+              // Recreate the branch and push changes
+              await gitProvider.createBranch(branchName, this.config.repository.baseBranch || 'main')
+              const packageJsonUpdates = await this.generateAllFileUpdates(group.updates)
+              if (packageJsonUpdates.length > 0) {
+                await gitProvider.commitChanges(branchName, this.commitMessageFor(group, '(reopened)'), packageJsonUpdates, this.config.repository.baseBranch || 'main')
+              }
+
+              // Reopen and update the existing PR
+              await gitProvider.reopenPullRequest!(recentlyClosed.number)
+              // Point the reopened PR at the new branch (in case branch name changed)
+              const dynamicLabels = this.labelsFor(group, prGenerator)
+              await gitProvider.updatePullRequest(recentlyClosed.number, {
+                title: prTitle,
+                body: prBody,
+                labels: dynamicLabels,
+                reviewers: this.config.pullRequest?.reviewers,
+            teamReviewers: this.config.pullRequest?.teamReviewers,
+                assignees: this.config.pullRequest?.assignees,
+              })
+
+              await this.events.emit('pr.updated', { number: recentlyClosed.number, title: prTitle, url: recentlyClosed.url })
+              this.logger.success(`✅ Reopened and updated PR #${recentlyClosed.number}: ${prTitle}`)
+              this.logger.info(`🔗 ${recentlyClosed.url}`)
+              reopenedFromClosed = true
+            }
+          }
+          catch (reopenError) {
+            this.logger.warn(`⚠️ Failed to check/reopen closed PRs:`, reopenError)
+          }
+
+          if (reopenedFromClosed)
+            continue
 
           // Create branch
           await gitProvider.createBranch(branchName, this.config.repository.baseBranch || 'main')
@@ -298,10 +1095,10 @@ export class Buddy {
             await runGitCommand('git', ['reset', '--hard', 'HEAD'])
             await runGitCommand('git', ['clean', '-fd'])
 
-            console.log(`🧹 Reset to clean main state before generating updates for ${group.name}`)
+            this.logger.info(`🧹 Reset to clean main state before generating updates for ${group.name}`)
           }
           catch (error) {
-            console.warn(`⚠️ Failed to reset to clean state, continuing anyway:`, error)
+            this.logger.warn(`⚠️ Failed to reset to clean state, continuing anyway:`, error)
           }
 
           // Update package.json with new versions
@@ -345,11 +1142,13 @@ export class Buddy {
 
           this.logger.info(`📝 Generated ${packageJsonUpdates.length} file changes for ${group.name}`)
 
-          // Commit changes
-          await gitProvider.commitChanges(branchName, group.title, packageJsonUpdates)
+          // Commit changes (Renovate-style: branch is created from base, changes applied fresh)
+          await gitProvider.commitChanges(branchName, this.commitMessageFor(group), packageJsonUpdates, this.config.repository.baseBranch || 'main')
 
-          // Generate dynamic labels based on update types and package types
-          const dynamicLabels = prGenerator.generateLabels(group)
+          // Reviewers and assignees still union here; labels are resolved by
+          // `labelsFor`, which every pull-request path shares.
+          const groupEffects = this.groupEffectsFor(group.updates)
+          const dynamicLabels = this.labelsFor(group, prGenerator)
 
           // Create pull request
           const pr = await gitProvider.createPullRequest({
@@ -357,21 +1156,55 @@ export class Buddy {
             body: prBody,
             head: branchName,
             base: this.config.repository.baseBranch || 'main',
-            draft: false,
-            reviewers: this.config.pullRequest?.reviewers,
-            assignees: this.config.pullRequest?.assignees,
+            // A migration a maintainer must check should not look finished.
+            draft: upgrade.draft,
+            reviewers: Buddy.mergeUnique(this.config.pullRequest?.reviewers, groupEffects.reviewers),
+            teamReviewers: this.config.pullRequest?.teamReviewers,
+            assignees: Buddy.mergeUnique(this.config.pullRequest?.assignees, groupEffects.assignees),
             labels: dynamicLabels,
           })
 
-          this.logger.success(`✅ Created PR #${pr.number}: ${pr.title}`)
+          prsCreatedThisRun++
+          this.logger.success(`✅ Created PR #${pr.number}: ${pr.title} (${prsCreatedThisRun}/${maxPRsPerRun} this run)`)
           this.logger.info(`🔗 ${pr.url}`)
+
+          await this.events.emit('pr.created', {
+            number: pr.number,
+            title: pr.title,
+            url: pr.url,
+            packages: group.updates.map(update => update.name),
+          })
+
+          await this.queueAutoMerge(gitProvider, pr, group.updates, dynamicLabels)
+
+          const groupDuration = Date.now() - groupStartTime
+          this.logger.info(`⏱️  Total group processing took ${groupDuration}ms`)
         }
         catch (error) {
+          // The same gap as a workflow-only group with no BUDDY_TOKEN (#1359),
+          // discovered at push time: the token exists but may not write
+          // workflows. Skipped with the remedy, like that case, rather than
+          // failing every scheduled run until someone changes a permission.
+          if (error instanceof Error && error.name === 'WorkflowPermissionError') {
+            this.logger.warn(`⚠️ Skipping group ${group.name}: ${error.message}`)
+            continue
+          }
           this.logger.error(`❌ Failed to create PR for group ${group.name}:`, error)
+          failedGroups.push({ name: group.name, error })
         }
       }
 
-      this.logger.success(`✅ Completed PR creation for ${scanResult.groups.length} group(s)`)
+      const totalPRDuration = Date.now() - prStartTime
+
+      // One group failing should not stop the others, but it must not end in a
+      // success either: a run that reports "completed" while every PR was
+      // refused leaves a repository silently out of date for months.
+      if (failedGroups.length > 0) {
+        const reasons = failedGroups.map(failure => `${failure.name}: ${formatError(failure.error)}`).join('\n  ')
+        throw new Error(`Could not create pull requests for ${failedGroups.length} of ${orderedGroups.length} group(s):\n  ${reasons}`)
+      }
+
+      this.logger.success(`✅ Completed PR creation for ${scanResult.groups.length} group(s) in ${totalPRDuration}ms`)
     }
     catch (error) {
       this.logger.error('Failed to create pull requests:', error)
@@ -380,37 +1213,44 @@ export class Buddy {
   }
 
   /**
-   * Check dependency files for updates using ts-pkgx
+   * Check if a version should be respected (like "*", "latest", etc.)
+   */
+  private shouldRespectVersion(version: string): boolean {
+    const respectLatest = this.config.packages?.respectLatest ?? true
+    if (!respectLatest)
+      return false
+
+    const dynamicIndicators = ['latest', '*', 'main', 'master', 'develop', 'dev']
+    const cleanVersion = version.toLowerCase().trim()
+    return dynamicIndicators.includes(cleanVersion)
+  }
+
+  /**
+   * Check dependency files for updates using ts-pantry
    */
   private async checkDependencyFilesForUpdates(packageFiles: PackageFile[]): Promise<PackageUpdate[]> {
     const { isDependencyFile } = await import('./utils/dependency-file-parser')
-    const { resolveDependencyFile } = await import('ts-pkgx')
+    const { resolveDependencyFile } = await import('ts-pantry')
 
     const updates: PackageUpdate[] = []
 
     // Filter to only dependency files (not package.json or lock files)
     const dependencyFiles = packageFiles.filter(file => isDependencyFile(file.path))
 
-    for (const file of dependencyFiles) {
+    this.logger.info(`⚡ Checking ${dependencyFiles.length} dependency files in parallel...`)
+
+    // PARALLEL: Process all dependency files concurrently
+    const filePromises = dependencyFiles.map(async (file) => {
       try {
         this.logger.info(`Checking dependency file: ${file.path}`)
 
-        // Use ts-pkgx to resolve latest versions
+        // Use ts-pantry to resolve latest versions
         const resolved = await resolveDependencyFile(file.path)
 
+        const fileUpdates: PackageUpdate[] = []
+
         for (const dep of resolved.allDependencies || []) {
-          // Check if current version should be respected (like "*", "latest", etc.)
-          const shouldRespectVersion = (version: string): boolean => {
-            const respectLatest = this.config.packages?.respectLatest ?? true
-            if (!respectLatest)
-              return false
-
-            const dynamicIndicators = ['latest', '*', 'main', 'master', 'develop', 'dev']
-            const cleanVersion = version.toLowerCase().trim()
-            return dynamicIndicators.includes(cleanVersion)
-          }
-
-          if (shouldRespectVersion(dep.constraint)) {
+          if (this.shouldRespectVersion(dep.constraint)) {
             this.logger.debug(`Skipping ${dep.name} - version "${dep.constraint}" should be respected`)
             continue
           }
@@ -429,13 +1269,13 @@ export class Buddy {
             }
 
             // Determine update type
-            const updateType = this.getUpdateType(constraintVersion, dep.version)
+            const updateType = getUpdateType(constraintVersion, dep.version)
 
             // Don't add prefix here - let the file updater handle prefix preservation
             // This prevents double prefixes when the constraint already has one
             const newVersion = dep.version
 
-            updates.push({
+            fileUpdates.push({
               name: dep.name,
               currentVersion: dep.constraint,
               newVersion,
@@ -449,11 +1289,18 @@ export class Buddy {
             })
           }
         }
+
+        return fileUpdates
       }
       catch (error) {
         this.logger.error(`Failed to check dependency file ${file.path}:`, error)
+        return []
       }
-    }
+    })
+
+    // Wait for all file checks to complete
+    const fileResults = await Promise.all(filePromises)
+    updates.push(...fileResults.flat())
 
     return updates
   }
@@ -461,9 +1308,84 @@ export class Buddy {
   /**
    * Check GitHub Actions for updates
    */
+  /**
+   * Check `build.zig.zon` dependencies for newer upstream releases.
+   *
+   * Zig package hashes are content-addressed, so an update has to rewrite both
+   * the URL and its hash — and only `zig fetch` can compute the replacement.
+   * When the toolchain is unavailable the whole pass is skipped rather than
+   * proposing a manifest that would fail `zig build` with a hash mismatch.
+   *
+   * @param packageFiles - Scanned files, filtered to Zig manifests here
+   * @returns Updates with the resolved hash carried in metadata
+   */
+  private async checkZigForUpdates(packageFiles: PackageFile[]): Promise<PackageUpdate[]> {
+    const { isZigManifest } = await import('./utils/zig-parser')
+    const { fetchLatestZigVersion, fetchZigHash, isZigAvailable, parseZigSource, zigUrlForVersion }
+      = await import('./utils/zig-registry')
+
+    const zigFiles = packageFiles.filter(file => isZigManifest(file.path))
+    if (zigFiles.length === 0)
+      return []
+
+    if (!(await isZigAvailable())) {
+      this.logger.warn(
+        '⚠️ Found Zig manifests but the zig toolchain is not available. '
+        + 'Skipping Zig updates: their content-addressed hashes cannot be recomputed without `zig fetch`.',
+      )
+      return []
+    }
+
+    const token = process.env.GITHUB_TOKEN || process.env.BUDDY_TOKEN || process.env.BUDDY_BOT_TOKEN
+    const candidates = zigFiles.flatMap(file =>
+      file.dependencies
+        .filter(dep => dep.type === 'zig-dependencies')
+        .map(dep => ({ file, dep })),
+    )
+
+    this.logger.info(`⚡ Checking ${candidates.length} Zig dependencies...`)
+
+    const results = await Promise.all(candidates.map(async ({ file, dep }): Promise<PackageUpdate | null> => {
+      const url = dep.metadata?.url
+      if (!url) {
+        this.logger.debug(`Skipping ${dep.name}: no URL recorded`)
+        return null
+      }
+
+      const source = parseZigSource(url)
+      if (!source) {
+        this.logger.debug(`Skipping ${dep.name}: only GitHub-hosted Zig dependencies can be checked`)
+        return null
+      }
+
+      const latest = await fetchLatestZigVersion(source, token)
+      if (!latest || latest === dep.currentVersion)
+        return null
+
+      const newUrl = zigUrlForVersion(url, latest)
+      const hash = await fetchZigHash(newUrl)
+      if (!hash) {
+        this.logger.warn(`⚠️ Skipping ${dep.name} ${dep.currentVersion} → ${latest}: could not compute its package hash`)
+        return null
+      }
+
+      this.logger.info(`📦 ${dep.name}: ${dep.currentVersion} → ${latest}`)
+      return {
+        name: dep.name,
+        currentVersion: dep.currentVersion,
+        newVersion: latest,
+        updateType: getUpdateType(dep.currentVersion, latest),
+        dependencyType: 'zig-dependencies' as const,
+        file: file.path,
+        resolved: { url: newUrl, hash },
+      }
+    }))
+
+    return results.filter((update): update is PackageUpdate => update !== null)
+  }
+
   private async checkGitHubActionsForUpdates(packageFiles: PackageFile[]): Promise<PackageUpdate[]> {
-    const { isGitHubActionsFile } = await import('./utils/github-actions-parser')
-    const { fetchLatestActionVersion } = await import('./utils/github-actions-parser')
+    const { fetchActionTagCommit, fetchLatestActionVersion, isGitHubActionsFile, sameActionVersion } = await import('./utils/github-actions-parser')
 
     const updates: PackageUpdate[] = []
 
@@ -472,60 +1394,99 @@ export class Buddy {
 
     this.logger.info(`🔍 Found ${githubActionsFiles.length} GitHub Actions workflow files`)
 
+    // PARALLEL: Collect all action dependencies from all files
+    const allActionChecks: Array<{ file: PackageFile, dep: any }> = []
     for (const file of githubActionsFiles) {
+      const actionDeps = file.dependencies.filter(dep => dep.type === 'github-actions')
+      this.logger.info(`Found ${actionDeps.length} GitHub Actions in ${file.path}`)
+      actionDeps.forEach(dep => allActionChecks.push({ file, dep }))
+    }
+
+    // PARALLEL: Fetch all action versions concurrently
+    this.logger.info(`⚡ Checking ${allActionChecks.length} GitHub Actions in parallel...`)
+    const actionPromises = allActionChecks.map(async ({ file, dep }) => {
       try {
-        this.logger.info(`Checking GitHub Actions file: ${file.path}`)
+        this.logger.info(`Checking action: ${dep.name}@${dep.currentVersion}`)
 
-        // Get all GitHub Actions dependencies from this file
-        const actionDeps = file.dependencies.filter(dep => dep.type === 'github-actions')
-        this.logger.info(`Found ${actionDeps.length} GitHub Actions in ${file.path}`)
+        // Fetch latest version for this action
+        const latestVersion = await fetchLatestActionVersion(dep.name)
 
-        for (const dep of actionDeps) {
-          try {
-            this.logger.info(`Checking action: ${dep.name}@${dep.currentVersion}`)
-
-            // Fetch latest version for this action
-            const latestVersion = await fetchLatestActionVersion(dep.name)
-
-            if (latestVersion) {
-              this.logger.info(`Latest version for ${dep.name}: ${latestVersion}`)
-
-              if (latestVersion !== dep.currentVersion) {
-                // Determine update type
-                const updateType = this.getUpdateType(dep.currentVersion, latestVersion)
-
-                this.logger.info(`Update available: ${dep.name} ${dep.currentVersion} → ${latestVersion} (${updateType})`)
-
-                updates.push({
-                  name: dep.name,
-                  currentVersion: dep.currentVersion,
-                  newVersion: latestVersion,
-                  updateType,
-                  dependencyType: 'github-actions',
-                  file: file.path,
-                  metadata: undefined,
-                  releaseNotesUrl: `https://github.com/${dep.name}/releases`,
-                  changelogUrl: undefined,
-                  homepage: `https://github.com/${dep.name}`,
-                })
-              }
-              else {
-                this.logger.info(`No update needed for ${dep.name}: already at ${latestVersion}`)
-              }
-            }
-            else {
-              this.logger.warn(`Could not fetch latest version for ${dep.name}`)
-            }
+        if (latestVersion && dep.metadata?.pinnedSha) {
+          // A SHA pin is compared through its `# vX.Y.Z` comment: a SHA never
+          // equals a tag, so comparing them directly proposed an "update" on
+          // every run and would have replaced the immutable pin with a tag.
+          const pinnedVersion = dep.metadata.pinnedVersion
+          if (!pinnedVersion) {
+            this.logger.info(`Skipping ${dep.name}@${dep.currentVersion}: a SHA pin without a version comment cannot be compared`)
+            return null
           }
-          catch (error) {
-            this.logger.warn(`Failed to check version for action ${dep.name}:`, error)
+          if (sameActionVersion(pinnedVersion, latestVersion)) {
+            this.logger.info(`No update needed for ${dep.name}: already pinned to ${latestVersion}`)
+            return null
+          }
+          const sha = await fetchActionTagCommit(dep.name, latestVersion)
+          if (!sha) {
+            this.logger.warn(`Could not resolve ${dep.name}@${latestVersion} to a commit; leaving the SHA pin alone`)
+            return null
+          }
+          const updateType = getUpdateType(pinnedVersion, latestVersion)
+          this.logger.info(`Update available: ${dep.name} ${pinnedVersion} → ${latestVersion} (${updateType}, pinned)`)
+          return {
+            name: dep.name,
+            currentVersion: dep.currentVersion,
+            newVersion: latestVersion,
+            updateType,
+            dependencyType: 'github-actions' as const,
+            file: file.path,
+            metadata: undefined,
+            resolved: { sha },
+            releaseNotesUrl: `${getGitHubServerUrl(this.config)}/${dep.name}/releases`,
+            changelogUrl: undefined,
+            homepage: `${getGitHubServerUrl(this.config)}/${dep.name}`,
           }
         }
+
+        if (latestVersion) {
+          this.logger.info(`Latest version for ${dep.name}: ${latestVersion}`)
+
+          if (latestVersion !== dep.currentVersion) {
+            // Determine update type
+            const updateType = getUpdateType(dep.currentVersion, latestVersion)
+
+            this.logger.info(`Update available: ${dep.name} ${dep.currentVersion} → ${latestVersion} (${updateType})`)
+
+            return {
+              name: dep.name,
+              currentVersion: dep.currentVersion,
+              newVersion: latestVersion,
+              updateType,
+              dependencyType: 'github-actions' as const,
+              file: file.path,
+              metadata: undefined,
+              releaseNotesUrl: `${getGitHubServerUrl(this.config)}/${dep.name}/releases`,
+              changelogUrl: undefined,
+              homepage: `${getGitHubServerUrl(this.config)}/${dep.name}`,
+            }
+          }
+          else {
+            this.logger.info(`No update needed for ${dep.name}: already at ${latestVersion}`)
+          }
+        }
+        else {
+          this.logger.warn(`Could not fetch latest version for ${dep.name}`)
+        }
+        return null
       }
       catch (error) {
-        this.logger.error(`Failed to check GitHub Actions file ${file.path}:`, error)
+        this.logger.warn(`Failed to check version for action ${dep.name}:`, error)
+        return null
       }
-    }
+    })
+
+    // Wait for all checks to complete
+    const actionResults = await Promise.all(actionPromises)
+    const validUpdates = actionResults.filter((update): update is NonNullable<typeof update> => update !== null)
+    updates.push(...validUpdates)
 
     this.logger.info(`Generated ${updates.length} GitHub Actions updates`)
 
@@ -550,48 +1511,173 @@ export class Buddy {
   }
 
   /**
-   * Determine update type based on version comparison
+   * Propose bumps to the runtimes declared under `engines`.
+   *
+   * Node and Deno publish releases on GitHub; the package managers publish to
+   * npm. `resolveEngineVersion` knows which is which, and the lookups are the
+   * clients this instance already has, so the npm side shares the registry
+   * cache with everything else in the scan.
+   *
+   * @param packageFiles - Every scanned manifest
+   * @returns One update per engine whose constraint no longer admits the newest release
    */
-  private getUpdateType(current: string, latest: string): 'major' | 'minor' | 'patch' {
-    try {
-      // Clean version strings, including v, @ prefix for version ranges
-      let cleanCurrent = current.replace(/^[v^~>=<@]+/, '')
-      let cleanLatest = latest.replace(/^[v^~>=<@]+/, '')
+  private async checkEnginesForUpdates(packageFiles: PackageFile[]): Promise<PackageUpdate[]> {
+    const { bumpEngineConstraint, engineUpdateType, resolveEngineVersion } = await import('./scanner/package-json-extras')
+    const { fetchLatestActionVersion } = await import('./utils/github-actions-parser')
 
-      // For GitHub Actions, normalize incomplete versions like "4" to "4.0.0"
-      // This is important for proper semver comparison
-      const normalizeVersion = (version: string): string => {
-        const parts = version.split('.')
-        while (parts.length < 3) {
-          parts.push('0')
+    const engines = packageFiles.flatMap(file =>
+      file.dependencies
+        .filter(dep => dep.type === 'engines')
+        .map(dep => ({ file, dep })),
+    )
+
+    if (engines.length === 0)
+      return []
+
+    this.logger.info(`⚡ Checking ${engines.length} engine constraint(s)...`)
+
+    const lookups = {
+      npm: (name: string) => this.registryClient.getLatestVersion(name),
+      // The action fetcher takes `owner/repo` and returns the latest release
+      // tag, which is exactly the shape a runtime's GitHub releases have.
+      github: (repo: string) => fetchLatestActionVersion(repo),
+    }
+
+    const checks = engines.map(async ({ file, dep }): Promise<PackageUpdate | null> => {
+      try {
+        const latest = await resolveEngineVersion(dep.name, lookups)
+        if (!latest)
+          return null
+
+        const proposed = bumpEngineConstraint(dep.currentVersion, latest)
+        if (!proposed) {
+          this.logger.debug(`${dep.name} ${dep.currentVersion} already admits ${latest}`)
+          return null
         }
-        return parts.join('.')
+
+        this.logger.info(`Update available: ${dep.name} ${dep.currentVersion} → ${proposed}`)
+
+        return {
+          name: dep.name,
+          currentVersion: dep.currentVersion,
+          newVersion: proposed,
+          updateType: engineUpdateType(dep.currentVersion, proposed),
+          dependencyType: 'engines',
+          file: file.path,
+        }
       }
+      catch (error) {
+        this.logger.warn(`Could not check engine ${dep.name}:`, error)
+        return null
+      }
+    })
 
-      cleanCurrent = normalizeVersion(cleanCurrent)
-      cleanLatest = normalizeVersion(cleanLatest)
+    return (await Promise.all(checks)).filter((update): update is PackageUpdate => update !== null)
+  }
 
-      if (Bun.semver.order(cleanLatest, cleanCurrent) <= 0)
-        return 'patch'
+  /**
+   * Check Dockerfiles for updates
+   */
+  private async checkDockerfilesForUpdates(packageFiles: PackageFile[]): Promise<PackageUpdate[]> {
+    const { isDockerfile } = await import('./utils/dockerfile-parser')
+    const { fetchLatestDockerImageVersion } = await import('./utils/dockerfile-parser')
 
-      // Use manual comparison for more accurate update type determination
-      const currentParts = cleanCurrent.split('.').map(Number)
-      const latestParts = cleanLatest.split('.').map(Number)
+    const updates: PackageUpdate[] = []
 
-      // Major version change
-      if (latestParts[0] > currentParts[0])
-        return 'major'
+    // Filter to only Dockerfile files
+    const dockerfiles = packageFiles.filter(file => isDockerfile(file.path))
 
-      // Minor version change
-      if (latestParts[0] === currentParts[0] && latestParts[1] > currentParts[1])
-        return 'minor'
+    this.logger.info(`🔍 Found ${dockerfiles.length} Dockerfile(s)`)
 
-      // Patch version change
-      return 'patch'
+    // PARALLEL: Collect all Docker image dependencies from all files
+    const allImageChecks: Array<{ file: PackageFile, dep: any }> = []
+    for (const file of dockerfiles) {
+      const imageDeps = file.dependencies.filter(dep => dep.type === 'docker-image')
+      this.logger.info(`Found ${imageDeps.length} Docker images in ${file.path}`)
+      imageDeps.forEach(dep => allImageChecks.push({ file, dep }))
     }
-    catch {
-      return 'patch'
-    }
+
+    // PARALLEL: Fetch all Docker image versions concurrently
+    this.logger.info(`⚡ Checking ${allImageChecks.length} Docker images in parallel...`)
+    const imagePromises = allImageChecks.map(async ({ file, dep }) => {
+      try {
+        this.logger.info(`Checking Docker image: ${dep.name}:${dep.currentVersion}`)
+
+        if (this.shouldRespectVersion(dep.currentVersion)) {
+          this.logger.debug(`Skipping ${dep.name} - version "${dep.currentVersion}" should be respected`)
+          return null
+        }
+
+        // The current tag is passed so its variant and precision survive: an
+        // `-alpine` image must not be "updated" to a Debian one.
+        const latestVersion = await fetchLatestDockerImageVersion(dep.name, dep.currentVersion, {
+          ...(this.config.registries?.docker ? { registries: this.config.registries.docker } : {}),
+          ...(this.config.packages?.includePrerelease !== undefined
+            ? { includePrerelease: this.config.packages.includePrerelease }
+            : {}),
+        })
+
+        if (latestVersion) {
+          this.logger.info(`Latest version for ${dep.name}: ${latestVersion}`)
+
+          if (latestVersion !== dep.currentVersion) {
+            // Determine update type
+            const updateType = getUpdateType(dep.currentVersion, latestVersion)
+
+            this.logger.info(`Update available: ${dep.name} ${dep.currentVersion} → ${latestVersion} (${updateType})`)
+
+            return {
+              name: dep.name,
+              currentVersion: dep.currentVersion,
+              newVersion: latestVersion,
+              updateType,
+              dependencyType: 'docker-image' as const,
+              file: file.path,
+              metadata: undefined,
+              releaseNotesUrl: `https://hub.docker.com/r/${dep.name}/tags`,
+              changelogUrl: undefined,
+              homepage: `https://hub.docker.com/r/${dep.name}`,
+            }
+          }
+          else {
+            this.logger.info(`No update needed for ${dep.name}: already at ${latestVersion}`)
+          }
+        }
+        else {
+          this.logger.warn(`Could not fetch latest version for Docker image ${dep.name}`)
+        }
+        return null
+      }
+      catch (error) {
+        this.logger.warn(`Failed to check version for Docker image ${dep.name}:`, error)
+        return null
+      }
+    })
+
+    // Wait for all checks to complete
+    const imageResults = await Promise.all(imagePromises)
+    const validUpdates = imageResults.filter((update): update is NonNullable<typeof update> => update !== null)
+    updates.push(...validUpdates)
+
+    this.logger.info(`Generated ${updates.length} Docker image updates`)
+
+    // Deduplicate updates by name, version, and file
+    const deduplicatedUpdates = updates.reduce((acc, update) => {
+      const existing = acc.find(u =>
+        u.name === update.name
+        && u.currentVersion === update.currentVersion
+        && u.newVersion === update.newVersion
+        && u.file === update.file,
+      )
+      if (!existing) {
+        acc.push(update)
+      }
+      return acc
+    }, [] as PackageUpdate[])
+
+    this.logger.info(`After deduplication: ${deduplicatedUpdates.length} unique Docker image updates`)
+
+    return deduplicatedUpdates
   }
 
   /**
@@ -607,6 +1693,60 @@ export class Buddy {
   }
 
   /**
+   * Compare versions safely, distinguishing between "comparison succeeded"
+   * and "comparison failed" (e.g., non-semver versions like GitHub Actions `v4`).
+   * Returns:
+   *   'at-or-beyond' — current is at or past the target
+   *   'behind'       — current is behind the target
+   *   'failed'       — could not compare (non-semver, malformed, etc.)
+   */
+  /**
+   * Read the version package.json declares for every dependency, keyed by
+   * package name. Range prefixes stay in place — compareVersionsSafe strips
+   * them. Returns an empty map when the manifest is missing or unreadable.
+   */
+  private readDeclaredNpmVersions(): Map<string, string> {
+    const declared = new Map<string, string>()
+    try {
+      const fs = require('node:fs')
+      const path = require('node:path')
+      const manifestPath = path.join(this.projectPath, 'package.json')
+      if (!fs.existsSync(manifestPath))
+        return declared
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+      for (const section of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+        for (const [name, version] of Object.entries(manifest[section] ?? {})) {
+          if (typeof version === 'string' && !declared.has(name))
+            declared.set(name, version)
+        }
+      }
+    }
+    catch (error) {
+      this.logger.debug('Could not read declared versions from package.json:', error)
+    }
+    return declared
+  }
+
+  private compareVersionsSafe(current: string, target: string): 'at-or-beyond' | 'behind' | 'failed' {
+    try {
+      const cleanTarget = target.replace(/^[v^~>=<@]+/, '')
+      const cleanCurrent = current.replace(/^[v^~>=<@]+/, '')
+
+      // Ensure both versions look like semver (at least x.y.z)
+      // Short versions like "4" or "v4" are not comparable via semver
+      if (!/^\d+\.\d+/.test(cleanTarget) || !/^\d+\.\d+/.test(cleanCurrent)) {
+        return 'failed'
+      }
+
+      const order = Bun.semver.order(cleanTarget, cleanCurrent)
+      return order > 0 ? 'behind' : 'at-or-beyond'
+    }
+    catch {
+      return 'failed'
+    }
+  }
+
+  /**
    * Generate file changes for updates (package.json, dependency files, GitHub Actions, etc.)
    */
   async generateAllFileUpdates(updates: PackageUpdate[]): Promise<Array<{ path: string, content: string, type: 'update' }>> {
@@ -615,10 +1755,37 @@ export class Buddy {
     // Handle package.json updates - only for actual package.json files, not dependency or GitHub Actions files
     const packageJsonUpdates = updates.filter(update =>
       update.file.endsWith('package.json')
+      && update.dependencyType !== 'engines'
       && !update.file.includes('.yaml')
       && !update.file.includes('.yml')
       && !update.file.includes('.github/workflows/'),
     )
+
+    // Engine constraints live under `engines`, which the dependency-section
+    // loop below never looks in — an engine update sent through it logged
+    // "not found" and wrote nothing.
+    const engineUpdates = updates.filter(update => update.dependencyType === 'engines')
+    if (engineUpdates.length > 0) {
+      const { applyEngineUpdates } = await import('./scanner/package-json-extras')
+      const byFile = new Map<string, PackageUpdate[]>()
+      for (const update of engineUpdates)
+        byFile.set(update.file, [...(byFile.get(update.file) ?? []), update])
+
+      for (const [path, fileEngines] of byFile) {
+        try {
+          const original = fs.readFileSync(path, 'utf-8')
+          const content = applyEngineUpdates(original, fileEngines)
+          if (content === original) {
+            this.logger.warn(`⚠️ No engine changes written to ${path}`)
+            continue
+          }
+          fileUpdates.push({ path, content, type: 'update' })
+        }
+        catch (error) {
+          this.logger.warn(`Failed to update engines in ${path}:`, error)
+        }
+      }
+    }
 
     // Group package.json updates by file
     const updatesByPackageFile = new Map<string, PackageUpdate[]>()
@@ -656,23 +1823,27 @@ export class Buddy {
               const versionPrefixMatch = currentVersionInFile.match(/^(\D*)/)
               const originalPrefix = versionPrefixMatch ? versionPrefixMatch[1] : ''
 
-              // Create regex to find the exact line with this package and version
-              // This handles various formatting styles like: "package": "version", "package":"version", etc.
-              const packageRegex = new RegExp(
-                `("${cleanPackageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\s*:\\s*")([^"]+)(")`,
-                'g',
+              // Create a more specific regex that only matches within the current dependency section
+              // This prevents accidentally updating scripts or other sections with the same package name
+              const escapedPackageName = cleanPackageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+              const escapedSectionName = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+              // Match the section, then find the package within that section
+              const sectionRegex = new RegExp(
+                `("${escapedSectionName}"\\s*:\\s*\\{[^}]*?)("${escapedPackageName}"\\s*:\\s*")([^"]+)(")([^}]*?\\})`,
+                'gs',
               )
 
               // Preserve the original prefix when updating to new version
               const newVersion = `${originalPrefix}${update.newVersion}`
-              packageJsonContent = packageJsonContent.replace(packageRegex, `$1${newVersion}$3`)
+              packageJsonContent = packageJsonContent.replace(sectionRegex, `$1$2${newVersion}$4$5`)
               packageFound = true
               break
             }
           }
 
           if (!packageFound) {
-            console.warn(`Package ${cleanPackageName} not found in ${packageJsonPath}`)
+            this.logger.warn(`Package ${cleanPackageName} not found in ${packageJsonPath}`)
           }
         }
 
@@ -683,16 +1854,20 @@ export class Buddy {
         })
       }
       catch (error) {
-        console.warn(`Failed to update ${packageJsonPath}:`, error)
+        this.logger.warn(`Failed to update ${packageJsonPath}:`, error)
       }
     }
 
     // Handle dependency file updates (deps.yaml, dependencies.yaml, etc.)
     // Only process if we have dependency file updates to avoid unnecessary processing
-    const dependencyFileUpdates = updates.filter(update =>
-      (update.file.includes('.yaml') || update.file.includes('.yml'))
-      && !update.file.includes('.github/workflows/'),
-    )
+    const dependencyFileUpdates = updates.filter((update) => {
+      const fileName = update.file.toLowerCase()
+      const isDependencyFile = fileName.endsWith('deps.yaml')
+        || fileName.endsWith('deps.yml')
+        || fileName.endsWith('dependencies.yaml')
+        || fileName.endsWith('dependencies.yml')
+      return isDependencyFile && !update.file.includes('.github/workflows/')
+    })
     if (dependencyFileUpdates.length > 0) {
       try {
         const { generateDependencyFileUpdates } = await import('./utils/dependency-file-parser')
@@ -742,7 +1917,204 @@ export class Buddy {
       }
     }
 
+    // Handle Dockerfile updates
+    // Only process if we have Dockerfile updates to avoid unnecessary processing
+    const dockerfileUpdates = updates.filter(update =>
+      update.dependencyType === 'docker-image',
+    )
+    if (dockerfileUpdates.length > 0) {
+      try {
+        const { generateDockerfileUpdates } = await import('./utils/dockerfile-parser')
+        // Pass only the Dockerfile updates for this specific group
+        // Passed through so a digest on a private image can be re-resolved
+        // with the same credentials the scan used to find the tag.
+        const dockerUpdates = await generateDockerfileUpdates(
+          dockerfileUpdates,
+          this.config.registries?.docker,
+        )
+        fileUpdates.push(...dockerUpdates)
+      }
+      catch (error) {
+        this.logger.error('Failed to generate Dockerfile updates:', error)
+        // Continue with other updates even if Dockerfile updates fail
+      }
+    }
+
+    // Handle Zig manifest updates
+    const zigManifestUpdates = updates.filter(update =>
+      update.dependencyType === 'zig-dependencies',
+    )
+    if (zigManifestUpdates.length > 0) {
+      try {
+        const { generateZigManifestUpdates } = await import('./utils/zig-parser')
+        const zigUpdates = await generateZigManifestUpdates(zigManifestUpdates)
+        fileUpdates.push(...zigUpdates)
+      }
+      catch (error) {
+        this.logger.error('Failed to generate Zig manifest updates:', error)
+        // Continue with other updates even if Zig updates fail
+      }
+    }
+
+    // pnpm catalog entries live in the workspace file, not in any package.json.
+    const catalogUpdates = updates.filter(update => update.dependencyType === 'catalog')
+    if (catalogUpdates.length > 0) {
+      try {
+        const { applyCatalogUpdates } = await import('./scanner/catalog-scan')
+        const path = catalogUpdates[0].file
+        const original = await Bun.file(join(this.projectPath, path)).text()
+        const content = applyCatalogUpdates(original, catalogUpdates)
+
+        if (content === original)
+          this.logger.warn(`⚠️ No catalog changes written to ${path}`)
+        else
+          fileUpdates.push({ path, content, type: 'update' })
+      }
+      catch (error) {
+        this.logger.error('Failed to generate pnpm catalog updates:', error)
+      }
+    }
+
+    fileUpdates.push(...await this.generateAdapterFileUpdates(updates))
+
     return fileUpdates
+  }
+
+  /**
+   * Write updates for the ecosystems behind the adapter interface.
+   *
+   * Each adapter owns its own write, because every manifest format has its own
+   * quoting and operator vocabulary — a shared rewriter would flatten a
+   * Gemfile's `~>` into a pin and a Python `~=` into `==`.
+   *
+   * Updates are grouped by file so a manifest with several changed
+   * dependencies is written once, and applied in sequence against the
+   * accumulating content rather than against the original.
+   *
+   * @param updates - Every update in the group
+   * @returns File changes for the adapter-owned manifests
+   */
+  private async generateAdapterFileUpdates(
+    updates: PackageUpdate[],
+  ): Promise<Array<{ path: string, content: string, type: 'update' }>> {
+    const { adapterNamed } = await import('./ecosystems')
+
+    const byFile = new Map<string, PackageUpdate[]>()
+    for (const update of updates) {
+      if (!adapterNamed(update.dependencyType))
+        continue
+
+      const existing = byFile.get(update.file)
+      if (existing)
+        existing.push(update)
+      else
+        byFile.set(update.file, [update])
+    }
+
+    const changes: Array<{ path: string, content: string, type: 'update' }> = []
+    const ecosystems = new Set<string>()
+
+    for (const [file, fileUpdates] of byFile) {
+      const adapter = adapterNamed(fileUpdates[0].dependencyType)
+      if (!adapter)
+        continue
+
+      ecosystems.add(adapter.name)
+
+      try {
+        const path = join(this.projectPath, file)
+        const original = await Bun.file(path).text()
+
+        let content = original
+        for (const update of fileUpdates) {
+          content = adapter.applyUpdate(content, {
+            name: update.name,
+            currentVersion: update.currentVersion,
+            newVersion: update.newVersion,
+            section: update.dependencyType,
+          })
+        }
+
+        // An unchanged file means no dependency matched, which is a parser or
+        // writer disagreement rather than a no-op worth committing.
+        if (content === original) {
+          this.logger.warn(`⚠️ ${adapter.name}: no changes written to ${file}`)
+          continue
+        }
+
+        changes.push({ path: file, content, type: 'update' })
+      }
+      catch (error) {
+        this.logger.error(`Failed to write ${adapter.name} updates to ${file}:`, error)
+      }
+    }
+
+    return [...changes, ...await this.regenerateAdapterLockfiles(changes, [...ecosystems])]
+  }
+
+  /**
+   * Bring the adapter ecosystems' lockfiles back in step with their manifests.
+   *
+   * `regenerateLockfiles` and every adapter's `postWrite` were written, tested
+   * and exported, and nothing called them — so a Python, Rust, Go or Ruby
+   * manifest was updated and its lockfile left describing the old version.
+   * That is precisely the `lockfile-drift` failure `fix-ci` exists to
+   * diagnose, arriving on a pull request buddy opened itself.
+   *
+   * The manifests are written to disk first because `postWrite` runs the
+   * ecosystem's own tool against the working tree — it reads the file, not the
+   * change about to be committed. The tree is a CI checkout that is discarded
+   * after the run, which is why writing to it is acceptable here and would not
+   * be somewhere longer-lived.
+   *
+   * @param changes - Manifest changes already produced
+   * @param ecosystems - Ecosystem names whose manifests changed
+   * @returns File changes for the regenerated lockfiles
+   */
+  private async regenerateAdapterLockfiles(
+    changes: Array<{ path: string, content: string, type: 'update' }>,
+    ecosystems: string[],
+  ): Promise<Array<{ path: string, content: string, type: 'update' }>> {
+    if (changes.length === 0 || ecosystems.length === 0)
+      return []
+
+    const { regenerateLockfiles } = await import('./ecosystems')
+
+    try {
+      for (const change of changes)
+        await Bun.write(join(this.projectPath, change.path), change.content)
+    }
+    catch (error) {
+      // Without the manifests on disk the tools would lock the old versions,
+      // which is worse than leaving the lockfile alone.
+      this.logger.warn(`⚠️ Could not stage manifests for lockfile regeneration: ${error}`)
+      return []
+    }
+
+    const { regenerated, notes } = await regenerateLockfiles(this.projectPath, ecosystems)
+
+    // A missing tool is reported rather than swallowed: the pull request will
+    // carry a manifest its lockfile does not match, and that is worth saying.
+    for (const note of notes)
+      this.logger.info(`ℹ️ ${note}`)
+
+    const locked: Array<{ path: string, content: string, type: 'update' }> = []
+
+    for (const lockfile of regenerated) {
+      try {
+        locked.push({
+          path: lockfile,
+          content: await Bun.file(join(this.projectPath, lockfile)).text(),
+          type: 'update',
+        })
+        this.logger.info(`🔒 Regenerated ${lockfile}`)
+      }
+      catch (error) {
+        this.logger.warn(`⚠️ Could not read the regenerated ${lockfile}: ${error}`)
+      }
+    }
+
+    return locked
   }
 
   /**
@@ -769,7 +2141,7 @@ export class Buddy {
    */
   async checkPackages(packageNames: string[]): Promise<PackageUpdate[]> {
     this.logger.info(`Checking specific packages: ${packageNames.join(', ')}`)
-    return this.registryClient.getUpdatesForPackages(packageNames)
+    return this.applyStrategy(await this.registryClient.getUpdatesForPackages(packageNames))
   }
 
   /**
@@ -777,11 +2149,32 @@ export class Buddy {
    */
   async checkPackagesWithPattern(pattern: string): Promise<PackageUpdate[]> {
     this.logger.info(`Checking packages with pattern: ${pattern}`)
-    return this.registryClient.getUpdatesWithPattern(pattern)
+    return this.applyStrategy(await this.registryClient.getUpdatesWithPattern(pattern))
   }
 
   /**
-   * Filter updates by strategy
+   * Apply the configured strategy to a targeted check.
+   *
+   * The full scan filtered by strategy and these two paths did not, so
+   * `buddy scan --strategy patch --packages react` folded `--strategy` into
+   * the config and then listed the major anyway.
+   */
+  private applyStrategy(updates: PackageUpdate[]): PackageUpdate[] {
+    const strategy = this.config.packages?.strategy
+    return strategy ? this.filterUpdatesByStrategy(updates, strategy) : updates
+  }
+
+  /**
+   * Filter updates by strategy.
+   *
+   * Defers to `strategyAllows`, the same predicate the rules engine uses for a
+   * rule-level `strategy`, so `packages.strategy` and a per-rule strategy can
+   * never again mean different things on the same set of updates.
+   *
+   * @param updates - Updates to filter
+   * @param strategy - Ceiling on semver impact: `all` admits everything,
+   * `major` only majors, `minor` minors and patches, `patch` only patches
+   * @returns The updates the strategy permits
    */
   private filterUpdatesByStrategy(
     updates: PackageUpdate[],
@@ -790,18 +2183,74 @@ export class Buddy {
     if (strategy === 'all')
       return updates
 
-    return updates.filter((update) => {
-      switch (strategy) {
-        case 'major':
-          return update.updateType === 'major'
-        case 'minor':
-          return update.updateType === 'major' || update.updateType === 'minor'
-        case 'patch':
-          return true // Include all types for patch strategy
-        default:
-          return true
+    return updates.filter(update => strategyAllows(strategy, update.updateType))
+  }
+
+  /**
+   * Filter updates by minimum release age requirement
+   */
+  private async filterUpdatesByMinimumReleaseAge(updates: PackageUpdate[]): Promise<PackageUpdate[]> {
+    const globalAge = this.config.packages?.minimumReleaseAge ?? 0
+    const rules = this.activeRules()
+
+    // A rule can set a hold where the global is zero, so the early return has
+    // to account for both. Checking only the global here is what made
+    // `rules[].minimumReleaseAge` inert: it was resolved into the effects and
+    // nothing ever read it.
+    const ruleSetsAnAge = rules.some(rule => rule.minimumReleaseAge !== undefined)
+    if (globalAge === 0 && !ruleSetsAnAge) {
+      return updates
+    }
+
+    this.logger.info(`Applying minimum release age filter (global ${globalAge} minutes${
+      ruleSetsAnAge ? ', with per-rule overrides' : ''
+    }) in parallel...`)
+
+    // PARALLEL: Check all updates concurrently
+    const ageCheckPromises = updates.map(async (update) => {
+      try {
+        // Resolved per update, because a rule matching this package may hold
+        // it longer — or shorter — than the repository default.
+        const required = (rules.length > 0
+          ? resolveRuleEffects(update, rules).minimumReleaseAge
+          : undefined) ?? globalAge
+
+        if (required === 0) {
+          return update
+        }
+
+        const meetsRequirement = await this.registryClient.meetsMinimumReleaseAge(
+          update.name,
+          update.newVersion,
+          update.dependencyType,
+          required,
+        )
+
+        if (meetsRequirement) {
+          return update
+        }
+        else {
+          this.logger.debug(`Filtered out ${update.name}@${update.newVersion} (${update.dependencyType}) — held for ${required} minutes after publication`)
+          return null
+        }
+      }
+      catch (error) {
+        // If there's an error checking the release age, be conservative and include the update
+        this.logger.warn(`Error checking release age for ${update.name}@${update.newVersion} (${update.dependencyType}), including update:`, error)
+        return update
       }
     })
+
+    // Wait for all checks to complete
+    const ageCheckResults = await Promise.all(ageCheckPromises)
+    const filteredUpdates = ageCheckResults.filter((update): update is PackageUpdate => update !== null)
+
+    const filteredCount = updates.length - filteredUpdates.length
+    if (filteredCount > 0) {
+      this.logger.info(`Filtered out ${filteredCount} updates due to minimum release age requirement`)
+    }
+
+    return filteredUpdates
   }
 
   /**
@@ -809,33 +2258,62 @@ export class Buddy {
    */
   private groupUpdatesByConfig(updates: PackageUpdate[]): UpdateGroup[] {
     const groups: UpdateGroup[] = []
-    const ungroupedUpdates = [...updates]
+
+    // Rule-supplied `groupName` is claimed first, so `packages.rules` and the
+    // legacy `packages.groups` produce one set of groups rather than two
+    // mechanisms competing for the same updates.
+    const { grouped, remaining } = this.groupByRuleNames(updates)
+    groups.push(...grouped)
+
+    const ungroupedUpdates = [...remaining]
 
     // Process configured groups
     if (this.config.packages?.groups) {
       for (const groupConfig of this.config.packages.groups) {
         const groupUpdates: PackageUpdate[] = []
 
-        // Find updates matching group patterns
+        // Find updates matching group patterns. Use Bun's Glob (already used
+        // elsewhere in this file for ignorePaths) instead of the naive
+        // `pattern.replace('*', '.*')` → new RegExp, which
+        //   (a) didn't escape other regex metacharacters (ReDoS + parse errors), and
+        //   (b) only replaced the FIRST `*`, so `@types/*-foo` never matched.
+        // Track claimed updates by index for O(n) removal instead of indexOf+splice.
+        // eslint-disable-next-line ts/no-require-imports
+        const { Glob } = require('bun')
+        const claimedIndices = new Set<number>()
         for (const pattern of groupConfig.patterns) {
-          const regex = new RegExp(pattern.replace('*', '.*'))
-          const matchingUpdates = ungroupedUpdates.filter(update => regex.test(update.name))
-          groupUpdates.push(...matchingUpdates)
-
-          // Remove from ungrouped
-          matchingUpdates.forEach((update) => {
-            const index = ungroupedUpdates.indexOf(update)
-            if (index > -1)
-              ungroupedUpdates.splice(index, 1)
+          let glob: InstanceType<typeof Glob>
+          try {
+            glob = new Glob(pattern)
+          }
+          catch (error) {
+            this.logger.warn(`Invalid group pattern '${pattern}':`, error)
+            continue
+          }
+          ungroupedUpdates.forEach((update, index) => {
+            if (!claimedIndices.has(index) && glob.match(update.name)) {
+              groupUpdates.push(update)
+              claimedIndices.add(index)
+            }
           })
         }
-
-        if (groupUpdates.length > 0) {
-          // Apply group-specific strategy if defined
-          let filteredUpdates = groupUpdates
-          if (groupConfig.strategy) {
-            filteredUpdates = this.filterUpdatesByStrategy(groupUpdates, groupConfig.strategy)
+        if (claimedIndices.size > 0) {
+          for (let i = ungroupedUpdates.length - 1; i >= 0; i--) {
+            if (claimedIndices.has(i))
+              ungroupedUpdates.splice(i, 1)
           }
+        }
+
+        // Apply group-specific strategy if defined
+        let filteredUpdates = groupUpdates
+        if (groupConfig.strategy) {
+          filteredUpdates = this.filterUpdatesByStrategy(groupUpdates, groupConfig.strategy)
+        }
+
+        // Note: minimum release age filtering is already applied globally before
+        // grouping. Push only when something survives the group's strategy filter —
+        // an empty group would otherwise reach the PR loop as a no-op entry.
+        if (filteredUpdates.length > 0) {
 
           groups.push({
             name: groupConfig.name,
@@ -858,6 +2336,49 @@ export class Buddy {
   }
 
   /**
+   * Claim updates into the groups their rules named.
+   *
+   * Only `packages.rules` participates: legacy `packages.groups` keeps its own
+   * path below, including its per-group strategy filtering, so existing
+   * configurations behave exactly as before.
+   *
+   * @param updates - Candidate updates
+   * @returns The rule-named groups and everything left over
+   */
+  private groupByRuleNames(updates: PackageUpdate[]): { grouped: UpdateGroup[], remaining: PackageUpdate[] } {
+    const rules = this.config.packages?.rules ?? []
+    if (rules.length === 0)
+      return { grouped: [], remaining: updates }
+
+    const byName = new Map<string, PackageUpdate[]>()
+    const remaining: PackageUpdate[] = []
+
+    for (const update of updates) {
+      const groupName = resolveRuleEffects(update, rules).groupName
+      if (!groupName) {
+        remaining.push(update)
+        continue
+      }
+
+      const existing = byName.get(groupName)
+      if (existing)
+        existing.push(update)
+      else
+        byName.set(groupName, [update])
+    }
+
+    const grouped = [...byName.entries()].map(([name, groupUpdates]) => ({
+      name,
+      updates: groupUpdates,
+      updateType: this.getHighestUpdateType(groupUpdates),
+      title: `chore(deps): update ${name}`,
+      body: `Update ${groupUpdates.length} packages in ${name} group`,
+    }))
+
+    return { grouped, remaining }
+  }
+
+  /**
    * Get the highest update type from a list of updates
    */
   private getHighestUpdateType(updates: PackageUpdate[]): 'major' | 'minor' | 'patch' {
@@ -869,7 +2390,25 @@ export class Buddy {
   }
 
   /**
+   * Generate a deterministic branch name for a group
+   * This ensures the same group always gets the same branch name,
+   * preventing duplicate PRs from being created
+   */
+  private generateBranchName(group: UpdateGroup): string {
+    // Normalize group name to create a stable branch name
+    const normalizedName = group.name
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '') // Remove any special characters
+      .replace(/-+/g, '-') // Collapse multiple hyphens
+      .replace(/^-|-$/g, '') // Trim leading/trailing hyphens
+
+    return `buddy/update-${normalizedName}`
+  }
+
+  /**
    * Check if two PR titles are similar (for dependency updates)
+   * This is used to find existing PRs that should be updated instead of creating new ones
    */
   private isSimilarPRTitle(existingTitle: string, newTitle: string): boolean {
     // Exact match is always similar
@@ -877,31 +2416,65 @@ export class Buddy {
       return true
     }
 
-    // For major updates, be very specific - only match if it's the exact same package and version
-    if (newTitle.toLowerCase().includes('update dependency ')) {
-      // Extract package name from titles like "chore(deps): update dependency package-name to v1.0"
+    const existingLower = existingTitle.toLowerCase()
+    const newLower = newTitle.toLowerCase()
+
+    // Match ecosystem-specific groups: GitHub Actions and Docker have their own PRs
+    const existingIsGHActions = existingLower.includes('github actions')
+    const newIsGHActions = newLower.includes('github actions')
+    if (existingIsGHActions && newIsGHActions)
+      return true
+    if (existingIsGHActions !== newIsGHActions)
+      return false
+
+    const existingIsDocker = existingLower.includes('docker image')
+    const newIsDocker = newLower.includes('docker image')
+    if (existingIsDocker && newIsDocker)
+      return true
+    if (existingIsDocker !== newIsDocker)
+      return false
+
+    // Match grouped updates: both are for "all non-major" or similar grouped patterns
+    const groupedPatterns = [
+      /update all non-major/i,
+      /update \d+ dependenc(y|ies)/i,
+      /update.*\(minor\)/i,
+      /update.*\(patch\)/i,
+      /update.*\(major\)/i,
+    ]
+
+    const existingIsGrouped = groupedPatterns.some(p => p.test(existingTitle))
+    const newIsGrouped = groupedPatterns.some(p => p.test(newTitle))
+
+    // If both are grouped updates, they're similar (same PR should be updated)
+    if (existingIsGrouped && newIsGrouped) {
+      // But differentiate between major and non-major
+      const existingIsMajor = existingLower.includes('(major)') || existingLower.includes('major update')
+      const newIsMajor = newLower.includes('(major)') || newLower.includes('major update')
+
+      // Only match if both are major or both are non-major
+      return existingIsMajor === newIsMajor
+    }
+
+    // For single dependency updates, match by package name
+    if (newLower.includes('update dependency ')) {
       const newPackageMatch = newTitle.match(/update dependency (\S+)/i)
       const existingPackageMatch = existingTitle.match(/update dependency (\S+)/i)
 
       if (newPackageMatch && existingPackageMatch) {
-        // Only similar if same package name
+        // Only similar if same package name (ignoring version)
         return newPackageMatch[1] === existingPackageMatch[1]
       }
     }
 
-    // Don't match different update types (major vs non-major, individual vs grouped)
-    const existingLower = existingTitle.toLowerCase()
-    const newLower = newTitle.toLowerCase()
-
-    // If one is for "all non-major" and other is for specific dependency, they're different
-    if ((existingLower.includes('all non-major') && newLower.includes('dependency '))
-      || (newLower.includes('all non-major') && existingLower.includes('dependency '))) {
+    // If one is grouped and one is individual, they're different
+    if (existingIsGrouped !== newIsGrouped) {
       return false
     }
 
     // Different specific dependencies are different PRs
     if (existingLower.includes('dependency ') && newLower.includes('dependency ')) {
-      return false // Each dependency gets its own PR
+      return false
     }
 
     // Otherwise, not similar
@@ -915,22 +2488,27 @@ export class Buddy {
     if (!existingPRBody)
       return false
 
-    // Extract package names and versions from the existing PR body
-    const packageRegex = /([\w@\-./]+):\s*(\d+\.\d+\.\d\S*)\s*→\s*(\d+\.\d+\.\d\S*)/g
+    // Use the unified extraction method that handles all table formats
+    // (both ASCII -> and Unicode → arrows, all package types)
+    const existingPRUpdates = this.extractPackageUpdatesFromPRBody(existingPRBody)
     const existingUpdates = new Map<string, { from: string, to: string }>()
 
-    let match
-
-    while ((match = packageRegex.exec(existingPRBody)) !== null) {
-      const [, packageName, fromVersion, toVersion] = match
-      existingUpdates.set(packageName, { from: fromVersion, to: toVersion })
+    for (const update of existingPRUpdates) {
+      existingUpdates.set(update.name, { from: update.currentVersion, to: update.newVersion })
     }
 
     // Check if all new updates are already covered
     for (const update of newUpdates) {
       const existing = existingUpdates.get(update.name)
-      if (!existing || existing.to !== update.newVersion) {
-        return false // Different or missing update
+      if (!existing) {
+        return false // Missing update
+      }
+
+      // Normalize versions for comparison (strip prefixes like ^, ~, v, >=)
+      const existingTo = existing.to.replace(/^[v^~>=<]+/, '')
+      const newVersion = update.newVersion.replace(/^[v^~>=<]+/, '')
+      if (existingTo !== newVersion) {
+        return false // Different target version
       }
     }
 
@@ -939,66 +2517,11 @@ export class Buddy {
   }
 
   /**
-   * Generate dynamic labels for PR based on update types and configuration
-   */
-  private generatePRLabels(group: UpdateGroup): string[] {
-    const labels = new Set<string>()
-
-    // Always add dependencies label
-    labels.add('dependencies')
-
-    // Add update type specific labels
-    const updateTypes = group.updates.map(u => u.updateType)
-    const hasUpdates = {
-      major: updateTypes.includes('major'),
-      minor: updateTypes.includes('minor'),
-      patch: updateTypes.includes('patch'),
-    }
-
-    // Add specific update type labels
-    if (hasUpdates.major) {
-      labels.add('major')
-    }
-    if (hasUpdates.minor) {
-      labels.add('minor')
-    }
-    if (hasUpdates.patch) {
-      labels.add('patch')
-    }
-
-    // Add additional contextual labels
-    if (group.updates.length > 5) {
-      labels.add('dependencies') // Use standard dependencies label instead of bulk-update
-    }
-
-    // Add security label if any package might be security related
-    const securityPackages = ['helmet', 'express-rate-limit', 'cors', 'bcrypt', 'jsonwebtoken']
-    const hasSecurityPackage = group.updates.some(update =>
-      securityPackages.some(pkg => update.name.includes(pkg)),
-    )
-    if (hasSecurityPackage) {
-      labels.add('security')
-    }
-
-    // Add configured labels from config if they exist (but avoid duplicates)
-    if (this.config.pullRequest?.labels) {
-      this.config.pullRequest.labels.forEach((label) => {
-        // Only add if it's not 'dependencies' since we always add that
-        if (label !== 'dependencies') {
-          labels.add(label)
-        }
-      })
-    }
-
-    // Convert to array and return
-    return Array.from(labels)
-  }
-
-  /**
    * Check if a PR should be auto-closed due to configuration changes
    * This handles cases where:
    * 1. respectLatest config changed from false to true, making dynamic version updates invalid
    * 2. ignorePaths config changed to exclude paths that existing PRs contain updates for
+   * 3. Dependency files (like composer.json) were removed from the project
    */
   private shouldAutoClosePR(existingPR: PullRequest, _newUpdates: PackageUpdate[]): boolean {
     // Check for respectLatest config changes
@@ -1010,6 +2533,12 @@ export class Buddy {
     // Check for ignorePaths config changes
     const shouldCloseForIgnorePaths = this.shouldAutoCloseForIgnorePaths(existingPR)
     if (shouldCloseForIgnorePaths) {
+      return true
+    }
+
+    // Check for removed dependency files
+    const shouldCloseForRemovedFiles = this.shouldAutoCloseForRemovedFiles(existingPR)
+    if (shouldCloseForRemovedFiles) {
       return true
     }
 
@@ -1027,47 +2556,19 @@ export class Buddy {
       return false
     }
 
-    // Check if the existing PR contains updates that would now be filtered out
-    // Look for dynamic version indicators in the PR body
+    // Use the unified extraction method to get actual version data from the PR
+    // This avoids false positives from searching the full body text for words like "main"
     const dynamicIndicators = ['latest', '*', 'main', 'master', 'develop', 'dev']
-    const prBody = existingPR.body.toLowerCase()
+    const prUpdates = this.extractPackageUpdatesFromPRBody(existingPR.body)
 
-    // Check if the PR body contains any dynamic version indicators
-    const hasDynamicVersions = dynamicIndicators.some(indicator =>
-      prBody.includes(indicator.toLowerCase()),
-    )
-
-    if (!hasDynamicVersions) {
+    if (prUpdates.length === 0) {
       return false
     }
 
-    // Check if any packages in the PR have dynamic versions
-    const oldPRPackages = this.extractPackagesFromPRBody(existingPR.body)
-
-    // Check if any of the packages had dynamic versions in the old PR
-    const packagesWithDynamicVersions = oldPRPackages.filter((pkg) => {
-      // Look for the package in the PR body table format: | [package](url) | version → newVersion |
-      const packagePattern = new RegExp(`\\|\\s*\\[${pkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\([^)]+\\)\\s*\\|\\s*([^|]+)\\s*\\|`, 'i')
-      const match = existingPR.body.match(packagePattern)
-      if (!match) {
-        // Fallback: look for the package name anywhere in the body with a version pattern
-        const fallbackPattern = new RegExp(`${pkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^\\w]*[:=]\\s*["']?([^"'\n]+)["']?`, 'i')
-        const fallbackMatch = existingPR.body.match(fallbackPattern)
-        if (!fallbackMatch)
-          return false
-
-        const version = fallbackMatch[1].toLowerCase().trim()
-        return dynamicIndicators.includes(version)
-      }
-
-      // Extract the version change part (e.g., "* → 3.13.5")
-      const versionChange = match[1].trim()
-      const currentVersionMatch = versionChange.match(/^([^→]+)→/)
-      if (!currentVersionMatch)
-        return false
-
-      const currentVersion = currentVersionMatch[1].trim().toLowerCase()
-      return dynamicIndicators.includes(currentVersion)
+    // Check if any extracted packages have dynamic versions as their "current" version
+    const packagesWithDynamicVersions = prUpdates.filter((update) => {
+      const cleanVersion = update.currentVersion.toLowerCase().trim()
+      return dynamicIndicators.includes(cleanVersion)
     })
 
     return packagesWithDynamicVersions.length > 0
@@ -1089,7 +2590,7 @@ export class Buddy {
     }
 
     // Check if any of the files in the PR are now in ignored paths
-    // eslint-disable-next-line ts/no-require-imports
+
     const { Glob } = require('bun')
 
     const ignoredFiles = filePaths.filter((filePath) => {
@@ -1117,9 +2618,257 @@ export class Buddy {
   }
 
   /**
-   * Extract file paths from PR body
+   * Check if a PR should be auto-closed due to removed dependency files
+   * This handles cases where dependency files like composer.json, package.json, etc.
+   * are completely removed from the project, making existing PRs obsolete
    */
+  private shouldAutoCloseForRemovedFiles(existingPR: PullRequest): boolean {
+    try {
+      // Extract file paths from the PR body
+      const filePaths = this.extractFilePathsFromPRBody(existingPR.body)
+      if (filePaths.length === 0) {
+        return false
+      }
+
+      // Check if any of the dependency files mentioned in the PR no longer exist
+      const fs = require('node:fs')
+      const path = require('node:path')
+
+      const removedFiles = filePaths.filter((filePath) => {
+        const fullPath = path.join(this.projectPath, filePath)
+        return !fs.existsSync(fullPath)
+      })
+
+      if (removedFiles.length > 0) {
+        this.logger.info(`PR #${existingPR.number} references removed files: ${removedFiles.join(', ')}`)
+
+        // Check if the removed files are outside ignored paths - if so, don't auto-close
+        if (this.config.packages?.ignorePaths && this.config.packages.ignorePaths.length > 0) {
+          const { Glob } = require('bun')
+
+          const filesOutsideIgnoredPaths = removedFiles.filter((filePath) => {
+            return !this.config.packages!.ignorePaths!.some((pattern) => {
+              try {
+                const glob = new Glob(pattern)
+                return glob.match(filePath)
+              }
+              catch (error) {
+                this.logger.warn(`Invalid glob pattern '${pattern}':`, error)
+                return false
+              }
+            })
+          })
+
+          // If any removed files are outside ignored paths, don't auto-close
+          if (filesOutsideIgnoredPaths.length > 0) {
+            this.logger.info(`Some removed files are outside ignored paths - not auto-closing PR #${existingPR.number}`)
+            return false
+          }
+        }
+
+        // Special handling for composer files - if composer.json is removed, close all composer-related PRs
+        const hasRemovedComposerJson = removedFiles.some(file => file.endsWith('composer.json'))
+        if (hasRemovedComposerJson) {
+          this.logger.info(`composer.json was removed - PR #${existingPR.number} should be auto-closed`)
+          return true
+        }
+
+        // For other dependency files, check if the PR is specifically about those files
+        const prBodyLower = existingPR.body.toLowerCase()
+        const isComposerPR = prBodyLower.includes('composer')
+          || removedFiles.some(file => file.includes('composer'))
+        const isPackageJsonPR = prBodyLower.includes('package.json')
+          || removedFiles.some(file => file.includes('package.json'))
+        const isDependencyFilePR = removedFiles.some(file =>
+          file.endsWith('deps.yaml')
+          || file.endsWith('deps.yml')
+          || file.endsWith('dependencies.yaml')
+          || file.endsWith('dependencies.yml'),
+        )
+
+        // Auto-close if the PR is specifically about the removed dependency management system
+        if (isComposerPR || isPackageJsonPR || isDependencyFilePR) {
+          this.logger.info(`PR #${existingPR.number} is about removed dependency system - should be auto-closed`)
+          return true
+        }
+      }
+
+      return false
+    }
+    catch (error) {
+      this.logger.debug(`Failed to check for removed files in PR #${existingPR.number}: ${error}`)
+      return false
+    }
+  }
+
+  /**
+   * The notification bus for this run, built once.
+   *
+   * Built lazily so a configuration with no notification destinations never
+   * constructs sinks or reads credentials it does not need.
+   */
+  private get events(): EventBus {
+    if (!this.eventBus) {
+      this.eventBus = new EventBus(this.logger)
+      for (const sink of createSinks(this.config.notifications as Parameters<typeof createSinks>[0]))
+        this.eventBus.register(sink)
+    }
+
+    return this.eventBus
+  }
+
+  /**
+   * Build a GitHub provider from the configured repository and environment
+   * tokens, or `null` when either is missing.
+   *
+   * `GITHUB_TOKEN` is preferred so commits are attributed to
+   * `github-actions[bot]` rather than a maintainer's contribution graph;
+   * `BUDDY_TOKEN` is the fallback and the source of workflow-file
+   * permissions.
+   */
+  private async createGitProvider(): Promise<GitProvider | null> {
+    const repository = this.config.repository
+    if (!repository?.owner || !repository.name) {
+      this.logger.warn('⚠️ Repository owner and name are required for pull request operations')
+      return null
+    }
+
+    try {
+      return await createProvider({
+        provider: repository.provider,
+        owner: repository.owner,
+        name: repository.name,
+        ...(repository.apiUrl ? { apiUrl: repository.apiUrl } : {}),
+      }, { logger: this.logger })
+    }
+    catch (error) {
+      // Missing credentials and unsupported providers are both configuration
+      // problems, not run failures: the caller degrades rather than aborting.
+      this.logger.warn(`⚠️ ${formatError(error)}`)
+      return null
+    }
+  }
+
+  /**
+   * Hand a freshly created PR to GitHub's auto-merge queue when it qualifies.
+   *
+   * Failures here are logged and swallowed: a PR that could not be queued is
+   * still a perfectly good PR, and `update-check` will reconsider it on the
+   * next run once its checks have reported.
+   */
+  private async queueAutoMerge(
+    gitProvider: GitProvider,
+    pr: PullRequest,
+    updates: PackageUpdate[],
+    labels: string[],
+  ): Promise<void> {
+    const decision = evaluateAutoMergeForUpdates(updates, labels, this.config)
+    if (!decision.eligible) {
+      this.logger.debug(`🔀 PR #${pr.number} not auto-merged: ${decision.reason}`)
+      return
+    }
+
+    const { strategy } = resolveAutoMergeConfig(this.config)
+    if (!supports(gitProvider, 'nativeAutoMerge', 'enableAutoMerge')) {
+      this.logger.info(`🔀 PR #${pr.number} qualifies for auto-merge but this provider has no merge queue; update-check will merge it once checks pass`)
+      return
+    }
+
+    try {
+      const queued = await gitProvider.enableAutoMerge(pr.number, strategy)
+      if (queued)
+        this.logger.success(`🔀 PR #${pr.number} queued for auto-merge (${decision.reason})`)
+      else
+        this.logger.info(`🔀 PR #${pr.number} qualifies for auto-merge but the repository cannot queue it; update-check will merge it once checks pass`)
+    }
+    catch (error) {
+      this.logger.warn(`⚠️ Failed to queue auto-merge for PR #${pr.number}: ${error}`)
+    }
+  }
+
+  /**
+   * Merge open buddy PRs that qualify for auto-merge and have green checks.
+   *
+   * This is the fallback for repositories where GitHub cannot queue a merge
+   * itself — without required checks configured, `enableAutoMerge` is refused,
+   * so the decision has to be re-made here once check results exist.
+   *
+   * @param dryRun - Report what would merge without merging
+   * @returns The PR numbers that were merged
+   */
+  async mergeEligiblePullRequests(dryRun = false): Promise<number[]> {
+    const settings = resolveAutoMergeConfig(this.config)
+    if (!settings.enabled)
+      return []
+
+    const gitProvider = await this.createGitProvider()
+    if (!gitProvider)
+      return []
+
+    const merged: number[] = []
+    const prs = await gitProvider.getPullRequests('open')
+
+    for (const pr of prs.filter(candidate => isBuddyBranch(candidate.head))) {
+      const checks = settings.requireGreenCI && gitProvider.getPullRequestChecksState
+        ? await gitProvider.getPullRequestChecksState(pr.number)
+        : 'none'
+
+      // A repository with no checks at all has nothing to wait for; only an
+      // explicit failure or an unfinished run blocks the merge.
+      const ciGreen = checks === 'success' || checks === 'none'
+      const decision = evaluateAutoMerge(
+        { number: pr.number, title: pr.title, body: pr.body, head: pr.head, labels: pr.labels, draft: pr.draft },
+        this.config,
+        ciGreen,
+      )
+
+      if (!decision.eligible) {
+        this.logger.debug(`🔀 PR #${pr.number} not merged: ${decision.reason}`)
+        continue
+      }
+
+      if (dryRun) {
+        this.logger.info(`🔀 [DRY RUN] Would merge PR #${pr.number} (${decision.reason})`)
+        merged.push(pr.number)
+        continue
+      }
+
+      try {
+        await gitProvider.mergePullRequest(pr.number, settings.strategy)
+        this.logger.success(`🔀 Merged PR #${pr.number}: ${decision.reason}`)
+        await this.events.emit('pr.merged', { number: pr.number, title: pr.title, strategy: settings.strategy })
+        merged.push(pr.number)
+      }
+      catch (error) {
+        this.logger.warn(`⚠️ Failed to merge PR #${pr.number}: ${error}`)
+      }
+    }
+
+    return merged
+  }
+
+  /**
+   * Extract file paths from PR body
+   *
+   * Reads the embedded manifest when present, falling back to scraping the
+   * rendered tables for PRs opened before manifests existed.
+   */
+  /**
+   * A regex capture from a PR body counts as a repository path only when it
+   * looks like one — markdown links, badges and URLs (renovate-era bodies are
+   * full of them) must not reach the removed-file check as phantom paths.
+   */
+  private isPlausibleRepoPath(candidate: string): boolean {
+    if (!candidate || /[\s()[\]!`]|:\/\//.test(candidate))
+      return false
+    return /^[\w@.-]+(?:\/[\w@.-]+)*$/.test(candidate)
+  }
+
   private extractFilePathsFromPRBody(prBody: string): string[] {
+    const manifest = parseManifest(prBody)
+    if (manifest)
+      return manifestFiles(manifest)
+
     const filePaths: string[] = []
 
     // Look for file paths in the PR body table (File column)
@@ -1128,7 +2877,7 @@ export class Buddy {
     let match
     while ((match = tableRowRegex.exec(prBody)) !== null) {
       const filePath = match[1].trim()
-      if (filePath && !filePaths.includes(filePath)) {
+      if (this.isPlausibleRepoPath(filePath) && !filePaths.includes(filePath)) {
         filePaths.push(filePath)
       }
     }
@@ -1137,7 +2886,7 @@ export class Buddy {
     const boldFileRegex = /\*\*([^*]+\.(?:json|yaml|yml|lock))\*\*/g
     while ((match = boldFileRegex.exec(prBody)) !== null) {
       const filePath = match[1].trim()
-      if (filePath && !filePaths.includes(filePath)) {
+      if (this.isPlausibleRepoPath(filePath) && !filePaths.includes(filePath)) {
         filePaths.push(filePath)
       }
     }
@@ -1148,7 +2897,7 @@ export class Buddy {
     while ((match = simpleTableRowRegex.exec(prBody)) !== null) {
       const filePath = match[1].trim()
       // Only consider paths that look like file paths (contain / or end with common extensions)
-      if (filePath && (filePath.includes('/') || /\.(?:json|yaml|yml|lock)$/.test(filePath)) && !filePaths.includes(filePath)) {
+      if (this.isPlausibleRepoPath(filePath) && (filePath.includes('/') || /\.(?:json|yaml|yml|lock)$/.test(filePath)) && !filePaths.includes(filePath)) {
         filePaths.push(filePath)
       }
     }
@@ -1157,7 +2906,7 @@ export class Buddy {
     const filePathRegex = /(?:^|\s)([\w-]+(?:\/[\w.-]+)*\/[\w.-]+\.(?:json|yaml|yml|lock))(?:\s|$)/gm
     while ((match = filePathRegex.exec(prBody)) !== null) {
       const filePath = match[1].trim()
-      if (filePath && !filePaths.includes(filePath)) {
+      if (this.isPlausibleRepoPath(filePath) && !filePaths.includes(filePath)) {
         filePaths.push(filePath)
       }
     }
@@ -1167,8 +2916,15 @@ export class Buddy {
 
   /**
    * Extract package names from PR body
+   *
+   * Reads the embedded manifest when present, falling back to scraping the
+   * rendered tables for PRs opened before manifests existed.
    */
   private extractPackagesFromPRBody(prBody: string): string[] {
+    const manifest = parseManifest(prBody)
+    if (manifest)
+      return [...new Set(manifest.updates.map(update => update.name))]
+
     const packages: string[] = []
 
     // Look for package names in the PR body table
@@ -1198,9 +2954,50 @@ export class Buddy {
   }
 
   /**
+   * Extract package updates with versions from PR body
+   *
+   * Reads the embedded manifest when present, falling back to scraping the
+   * rendered tables for PRs opened before manifests existed.
+   */
+  private extractPackageUpdatesFromPRBody(body: string): Array<{ name: string, currentVersion: string, newVersion: string }> {
+    const manifest = parseManifest(body)
+    if (manifest)
+      return manifestUpdates(manifest)
+
+    const updates: Array<{ name: string, currentVersion: string, newVersion: string }> = []
+    const seen = new Set<string>()
+
+    // Match table rows with package updates - handles npm, Composer, system deps, and GH Actions
+    // npm format:    | [package](link) | [`^version` -> `^version`](diff) | ... |
+    // system format: | [package](link) | `^version` → `^version` | ... |
+    // GH Actions:    | [action](link) | `v1.2.3` → `v2.0.0` | ... |
+    // Composer:      | [package](link) | `version` -> `version` | file | status |
+    // Also handles versions without backticks: | [pkg](url) | * → 3.13.5 | ... |
+    // Handles both ASCII arrow (->) and Unicode arrow (→)
+    const tableRowRegex = /\|\s*\[([^\]]+)\][^|]*\|\s*\[?`?[v^~>=]*([^`|\s]+)`?\s*(?:->|→)\s*`?[v^~>=]*([^`|\s]+)`?\]?/g
+
+    let match
+
+    while ((match = tableRowRegex.exec(body)) !== null) {
+      const [, packageName, currentVersion, newVersion] = match
+      // Deduplicate by package name (same package can appear in multiple sections)
+      if (!seen.has(packageName)) {
+        seen.add(packageName)
+        updates.push({
+          name: packageName,
+          currentVersion,
+          newVersion,
+        })
+      }
+    }
+
+    return updates
+  }
+
+  /**
    * Get configuration summary
    */
-  getConfig(): BuddyBotConfig {
+  getConfig(): BuddyConfig {
     return this.config
   }
 
@@ -1209,6 +3006,371 @@ export class Buddy {
    */
   getProjectPath(): string {
     return this.projectPath
+  }
+
+  /**
+   * Check for and auto-close obsolete PRs due to removed dependency files
+   * This is called during the update-check workflow to proactively clean up PRs
+   * when projects stop using certain dependency management systems (like Composer)
+   */
+  async checkAndCloseObsoletePRs(gitProvider: GitProvider, dryRun: boolean = false): Promise<void> {
+    try {
+      this.logger.info('🔍 Scanning for obsolete PRs due to removed dependency files...')
+
+      // Get all open PRs
+      const openPRs = await gitProvider.getPullRequests('open')
+
+      // Only check buddy PRs — never close PRs from other tools like Renovate or Dependabot
+      const dependencyPRs = openPRs.filter(pr =>
+        isBuddyBranch(pr.head)
+        || (pr.author === 'github-actions[bot]' && pr.labels.includes('dependencies')),
+      )
+
+      this.logger.info(`Found ${dependencyPRs.length} dependency-related PRs to check`)
+
+      let closedCount = 0
+
+      for (const pr of dependencyPRs) {
+        try {
+          // Check if this PR should be auto-closed due to removed files
+          const shouldClose = this.shouldAutoCloseForRemovedFiles(pr)
+
+          if (shouldClose) {
+            this.logger.info(`🔒 PR #${pr.number} should be auto-closed: ${pr.title}`)
+
+            if (dryRun) {
+              this.logger.info(`🔍 [DRY RUN] Would auto-close PR #${pr.number}`)
+              closedCount++
+            }
+            else {
+              try {
+                // Close the PR with a helpful comment
+                const closeReason = this.generateCloseReason(pr)
+
+                // Add comment explaining why the PR is being closed
+                try {
+                  await gitProvider.createComment(pr.number, closeReason)
+                }
+                catch (commentError) {
+                  this.logger.warn(`⚠️ Could not add close reason comment to PR #${pr.number}:`, commentError)
+                }
+
+                await gitProvider.closePullRequest(pr.number)
+                await this.events.emit('pr.closed', { number: pr.number, title: pr.title, reason: 'obsolete — its dependency files no longer exist' })
+
+                // Try to delete the branch if it's a buddy branch
+                if (isBuddyBranch(pr.head)) {
+                  try {
+                    await gitProvider.deleteBranch(pr.head)
+                    this.logger.success(`✅ Auto-closed PR #${pr.number} and deleted branch ${pr.head}`)
+                  }
+                  catch (branchError) {
+                    this.logger.warn(`⚠️ Auto-closed PR #${pr.number} but failed to delete branch: ${branchError}`)
+                  }
+                }
+                else {
+                  this.logger.success(`✅ Auto-closed PR #${pr.number}`)
+                }
+
+                closedCount++
+              }
+              catch (closeError) {
+                this.logger.error(`❌ Failed to auto-close PR #${pr.number}:`, closeError)
+              }
+            }
+          }
+        }
+        catch (error) {
+          this.logger.warn(`⚠️ Error checking PR #${pr.number}:`, error)
+        }
+      }
+
+      if (closedCount > 0) {
+        this.logger.success(`✅ ${dryRun ? 'Would auto-close' : 'Auto-closed'} ${closedCount} obsolete PR(s)`)
+      }
+      else {
+        this.logger.info('📋 No obsolete PRs found')
+      }
+    }
+    catch (error) {
+      this.logger.error('Failed to check for obsolete PRs:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Check for and auto-close PRs where dependencies are already at target version
+   * This handles cases like PR #125 where the update has already been applied
+   */
+  async checkAndCloseSatisfiedPRs(gitProvider: GitProvider, dryRun: boolean = false): Promise<void> {
+    try {
+      this.logger.info('🔍 Checking for PRs where dependencies are already at target version...')
+
+      // Get all open PRs
+      const openPRs = await gitProvider.getPullRequests('open')
+
+      // Only check buddy PRs — never close PRs from other tools
+      const dependencyPRs = openPRs.filter(pr =>
+        isBuddyBranch(pr.head)
+        || (pr.author === 'github-actions[bot]' && pr.labels.includes('dependencies')),
+      )
+
+      this.logger.info(`Found ${dependencyPRs.length} buddy dependency PRs to validate`)
+
+      if (dependencyPRs.length === 0) {
+        this.logger.info('📋 No buddy PRs to check')
+        return
+      }
+
+      let closedCount = 0
+
+      // Scan current project state once — use strategy 'all' so we see every
+      // available update regardless of the config's strategy.  This prevents
+      // false-positive closures when, e.g., the config says 'patch' but PRs
+      // exist for major updates: without 'all', major updates would be filtered
+      // out of the scan, their packages would be absent from currentUpdatesMap,
+      // and the PR would be incorrectly considered "satisfied".
+      const scanConfig: BuddyConfig = {
+        ...this.config,
+        packages: {
+          ...this.config.packages,
+          strategy: 'all',
+        },
+      }
+      const scanBuddy = new Buddy(scanConfig, this.projectPath)
+      const currentScanResult = await scanBuddy.scanForUpdates()
+      const currentUpdatesMap = new Map<string, PackageUpdate>()
+      for (const update of currentScanResult.updates) {
+        currentUpdatesMap.set(update.name, update)
+      }
+
+      // Positive evidence for packages the scan no longer lists: what the
+      // manifest itself declares. A fully satisfied PR consists entirely of
+      // packages absent from an outdated-scan, so without this the closer
+      // could never close one.
+      const declaredVersions = this.readDeclaredNpmVersions()
+
+      // Safety: if the scan returned 0 updates, something may be wrong
+      // (bun outdated failure, missing node_modules, rate limiting, etc.).
+      // Never close PRs based on an empty scan — that would wipe them all out.
+      if (currentScanResult.updates.length === 0) {
+        this.logger.warn('⚠️ Scan returned 0 updates — skipping satisfied PR check to avoid false-positive closures')
+        return
+      }
+
+      for (const pr of dependencyPRs) {
+        try {
+          // Extract package updates from PR body
+          const prUpdates = this.extractPackageUpdatesFromPRBody(pr.body)
+
+          if (prUpdates.length === 0) {
+            this.logger.debug(`PR #${pr.number}: Could not extract package updates, skipping`)
+            continue
+          }
+
+          // Safety: extract the declared total from the PR summary table
+          // If we extracted fewer packages than declared, our extraction is incomplete
+          // and we must NOT close the PR based on partial data
+          const totalMatch = pr.body.match(/\*\*Total\*\*\s*\|\s*\*\*(\d+)\*\*/)
+          const declaredTotal = totalMatch ? Number.parseInt(totalMatch[1], 10) : 0
+          if (declaredTotal > 0 && prUpdates.length < declaredTotal) {
+            this.logger.debug(`PR #${pr.number}: Extracted ${prUpdates.length}/${declaredTotal} updates — incomplete extraction, skipping satisfied check`)
+            continue
+          }
+
+          // Track how many packages we could actually verify vs how many we couldn't find
+          let verifiedSatisfied = 0
+          let verifiedStillNeeded = 0
+          let unverifiable = 0
+
+          // Check if all packages in the PR are already satisfied
+          // A package is "satisfied" if:
+          // 1. It's already at the target version or newer (confirmed by scan)
+          // 2. It's no longer a direct dependency AND we have a healthy scan
+          for (const prUpdate of prUpdates) {
+            const currentUpdate = currentUpdatesMap.get(prUpdate.name)
+
+            if (!currentUpdate) {
+              // Package not in current scan.  This could mean:
+              //   a) Already at the target version (genuinely satisfied)
+              //   b) Scan missed it (strategy filtering, API failure, etc.)
+              // The manifest distinguishes them: a declared version at or
+              // beyond the target is positive confirmation of (a).
+              const declaredVersion = declaredVersions.get(prUpdate.name)
+              if (declaredVersion) {
+                const declaredComparison = this.compareVersionsSafe(declaredVersion, prUpdate.newVersion)
+                if (declaredComparison === 'at-or-beyond') {
+                  this.logger.debug(`PR #${pr.number}: ${prUpdate.name} declared at ${declaredVersion}, at or beyond ${prUpdate.newVersion}`)
+                  verifiedSatisfied++
+                  continue
+                }
+                if (declaredComparison === 'behind') {
+                  this.logger.debug(`PR #${pr.number}: ${prUpdate.name} declared at ${declaredVersion}, still behind ${prUpdate.newVersion} — the scan missed it`)
+                  verifiedStillNeeded++
+                  continue
+                }
+              }
+              this.logger.debug(`PR #${pr.number}: ${prUpdate.name} not in current scan and not declared (unverifiable)`)
+              unverifiable++
+              continue
+            }
+
+            // If the PR's target version matches what we currently need,
+            // the PR is still relevant
+            if (currentUpdate.newVersion === prUpdate.newVersion) {
+              this.logger.debug(`PR #${pr.number}: ${prUpdate.name} still needs update to ${prUpdate.newVersion}`)
+              verifiedStillNeeded++
+              continue
+            }
+
+            // Check if current project version is already at or beyond PR target
+            // Use a stricter comparison that distinguishes "comparison failed" from "not newer"
+            const comparisonResult = this.compareVersionsSafe(currentUpdate.currentVersion, prUpdate.newVersion)
+
+            if (comparisonResult === 'at-or-beyond') {
+              this.logger.debug(`PR #${pr.number}: ${prUpdate.name} already at or beyond ${prUpdate.newVersion}`)
+              verifiedSatisfied++
+            }
+            else if (comparisonResult === 'behind') {
+              this.logger.debug(`PR #${pr.number}: ${prUpdate.name} still behind ${prUpdate.newVersion}`)
+              verifiedStillNeeded++
+            }
+            else {
+              // comparison-failed: can't determine, treat as unverifiable
+              this.logger.debug(`PR #${pr.number}: ${prUpdate.name} version comparison inconclusive`)
+              unverifiable++
+            }
+          }
+
+          // Only close the PR if:
+          // 1. We found NO packages that still need updating
+          // 2. We had ZERO unverifiable packages (every package was positively confirmed)
+          // 3. We positively verified at least one package as satisfied
+          const satisfied = verifiedStillNeeded === 0 && unverifiable === 0 && verifiedSatisfied > 0
+
+          this.logger.debug(`PR #${pr.number}: verified-satisfied=${verifiedSatisfied}, still-needed=${verifiedStillNeeded}, unverifiable=${unverifiable} → ${satisfied ? 'CLOSE' : 'KEEP'}`)
+
+          if (satisfied) {
+            this.logger.info(`✅ PR #${pr.number} is satisfied (dependencies at target version): ${pr.title}`)
+
+            if (dryRun) {
+              this.logger.info(`🔍 [DRY RUN] Would close PR #${pr.number}`)
+              closedCount++
+            }
+            else {
+              try {
+                // All packages were verified as satisfied (no unverifiable ones)
+                const packagesAlreadyUpdated = prUpdates.filter((u) => {
+                  const current = currentUpdatesMap.get(u.name)
+                  const version = current?.currentVersion ?? declaredVersions.get(u.name)
+                  if (!version)
+                    return false
+                  return this.compareVersionsSafe(version, u.newVersion) === 'at-or-beyond'
+                })
+
+                let closeComment = `🤖 **Auto-closing satisfied PR**\n\n`
+
+                if (packagesAlreadyUpdated.length > 0) {
+                  closeComment += `The following packages are already at the target version or newer:\n\n`
+                  packagesAlreadyUpdated.forEach((u) => {
+                    closeComment += `- **${u.name}**: ${u.currentVersion} → ${u.newVersion}\n`
+                  })
+                  closeComment += `\n`
+                }
+
+                closeComment += `If this was closed in error, please reopen and add a comment explaining why.`
+
+                try {
+                  await gitProvider.createComment(pr.number, closeComment)
+                }
+                catch (commentError) {
+                  this.logger.warn(`⚠️ Could not add comment to PR #${pr.number}:`, commentError)
+                }
+
+                await gitProvider.closePullRequest(pr.number)
+                await this.events.emit('pr.closed', { number: pr.number, title: pr.title, reason: 'satisfied — every package already at or beyond target' })
+
+                // Try to delete the branch if it's a buddy branch
+                if (isBuddyBranch(pr.head)) {
+                  try {
+                    await gitProvider.deleteBranch(pr.head)
+                    this.logger.success(`✅ Closed PR #${pr.number} and deleted branch ${pr.head}`)
+                  }
+                  catch (branchError) {
+                    this.logger.warn(`⚠️ Closed PR #${pr.number} but failed to delete branch: ${branchError}`)
+                  }
+                }
+                else {
+                  this.logger.success(`✅ Closed PR #${pr.number}`)
+                }
+
+                closedCount++
+              }
+              catch (closeError) {
+                this.logger.error(`❌ Failed to close PR #${pr.number}:`, closeError)
+              }
+            }
+          }
+        }
+        catch (error) {
+          this.logger.warn(`⚠️ Error validating PR #${pr.number}:`, error)
+        }
+      }
+
+      if (closedCount > 0) {
+        this.logger.success(`✅ ${dryRun ? 'Would close' : 'Closed'} ${closedCount} satisfied PR(s)`)
+      }
+      else {
+        this.logger.info('📋 No satisfied PRs found')
+      }
+    }
+    catch (error) {
+      this.logger.error('Failed to check for satisfied PRs:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Generate a helpful close reason comment for auto-closed PRs
+   */
+  private generateCloseReason(pr: PullRequest): string {
+    const filePaths = this.extractFilePathsFromPRBody(pr.body)
+    const removedFiles = filePaths.filter((filePath) => {
+      const fs = require('node:fs')
+      const path = require('node:path')
+      const fullPath = path.join(this.projectPath, filePath)
+      return !fs.existsSync(fullPath)
+    })
+
+    const hasRemovedComposer = removedFiles.some(file => file.includes('composer'))
+    const hasRemovedPackageJson = removedFiles.some(file => file.includes('package.json'))
+    const hasRemovedDeps = removedFiles.some(file =>
+      file.endsWith('deps.yaml') || file.endsWith('deps.yml')
+      || file.endsWith('dependencies.yaml') || file.endsWith('dependencies.yml'),
+    )
+
+    let reason = '🤖 **Auto-closing obsolete PR**\n\n'
+
+    if (hasRemovedComposer) {
+      reason += 'This PR was automatically closed because `composer.json` has been removed from the project, indicating that Composer is no longer used for dependency management.\n\n'
+    }
+    else if (hasRemovedPackageJson) {
+      reason += 'This PR was automatically closed because `package.json` has been removed from the project, indicating that npm/yarn/pnpm is no longer used for dependency management.\n\n'
+    }
+    else if (hasRemovedDeps) {
+      reason += 'This PR was automatically closed because the dependency files it references have been removed from the project.\n\n'
+    }
+    else {
+      reason += 'This PR was automatically closed because the dependency files it references are no longer present in the project.\n\n'
+    }
+
+    if (removedFiles.length > 0) {
+      reason += `**Removed files:**\n${removedFiles.map(file => `- \`${file}\``).join('\n')}\n\n`
+    }
+
+    reason += 'If this was closed in error, please reopen the PR and update the dependency files accordingly.'
+
+    return reason
   }
 
   /**
@@ -1227,15 +3389,21 @@ export class Buddy {
         throw new Error('Dashboard is currently only supported for GitHub repositories')
       }
 
-      // Initialize git provider
-      const token = this.config.repository.token || process.env.BUDDY_BOT_TOKEN || process.env.GITHUB_TOKEN || ''
-      const hasWorkflowPermissions = !!process.env.BUDDY_BOT_TOKEN
-      const gitProvider = new GitHubProvider(
-        token,
-        this.config.repository.owner,
-        this.config.repository.name,
-        hasWorkflowPermissions,
-      )
+      if (!this.config.repository.owner || !this.config.repository.name) {
+        throw new Error(
+          'Repository owner and name are required for dashboard. '
+          + 'Set them in buddy.config.ts or ensure GITHUB_REPOSITORY env var is available.',
+        )
+      }
+
+      // Use GITHUB_TOKEN as primary (github-actions[bot] attribution)
+      const gitProvider = await createProvider({
+        provider: this.config.repository.provider,
+        owner: this.config.repository.owner,
+        name: this.config.repository.name,
+        ...(this.config.repository.token ? { token: this.config.repository.token } : {}),
+        ...(this.config.repository.apiUrl ? { apiUrl: this.config.repository.apiUrl } : {}),
+      }, { logger: this.logger })
 
       // Collect dashboard data
       const dashboardData = await this.collectDashboardData(gitProvider)
@@ -1246,28 +3414,33 @@ export class Buddy {
         showOpenPRs: dashboardConfig.showOpenPRs ?? true,
         showDetectedDependencies: dashboardConfig.showDetectedDependencies ?? true,
         showDeprecatedDependencies: dashboardConfig.showDeprecatedDependencies ?? true,
+        includePackageJson: dashboardConfig.includePackageJson ?? true,
+        includeDependencyFiles: dashboardConfig.includeDependencyFiles ?? true,
+        includeGitHubActions: dashboardConfig.includeGitHubActions ?? true,
         bodyTemplate: dashboardConfig.bodyTemplate,
       })
+
+      const issueOptions: IssueOptions = {
+        title: dashboardConfig.title || title,
+        body,
+        labels: dashboardConfig.labels || ['dependencies', 'dashboard'],
+        assignees: dashboardConfig.assignees,
+      }
 
       // Check if dashboard issue already exists
       const existingIssue = await this.findExistingDashboard(gitProvider, dashboardConfig.issueNumber)
 
-      let issue: Issue
+      let issue: Issue | null = null
 
       if (existingIssue) {
         this.logger.info(`Updating existing dashboard issue #${existingIssue.number}`)
+        issue = await this.updateDashboardIssue(gitProvider, existingIssue.number, issueOptions)
 
-        // Update existing dashboard
-        issue = await gitProvider.updateIssue(existingIssue.number, {
-          title: dashboardConfig.title || title,
-          body,
-          labels: dashboardConfig.labels || ['dependencies', 'dashboard'],
-          assignees: dashboardConfig.assignees,
-        })
-
-        this.logger.success(`✅ Successfully updated dashboard issue #${issue.number}`)
+        if (issue)
+          this.logger.success(`✅ Successfully updated dashboard issue #${issue.number}`)
       }
-      else {
+
+      if (!issue) {
         this.logger.info('Creating new dashboard issue')
 
         // Double-check for race condition: search again right before creating
@@ -1275,30 +3448,35 @@ export class Buddy {
         this.logger.info('Performing final check for existing dashboards before creation...')
         const raceCheckIssue = await this.findExistingDashboard(gitProvider, dashboardConfig.issueNumber)
 
-        if (raceCheckIssue) {
+        // Skip the race-check result if it is the issue we just found to be missing
+        if (raceCheckIssue && raceCheckIssue.number !== existingIssue?.number) {
           this.logger.info(`Race condition detected! Found existing dashboard #${raceCheckIssue.number} during final check`)
-          // Update the found issue instead of creating a new one
-          issue = await gitProvider.updateIssue(raceCheckIssue.number, {
-            title: dashboardConfig.title || title,
-            body,
-            labels: dashboardConfig.labels || ['dependencies', 'dashboard'],
-            assignees: dashboardConfig.assignees,
-          })
-          this.logger.success(`✅ Updated existing dashboard issue #${issue.number} (race condition avoided)`)
+          issue = await this.updateDashboardIssue(gitProvider, raceCheckIssue.number, issueOptions)
+
+          if (issue)
+            this.logger.success(`✅ Updated existing dashboard issue #${issue.number} (race condition avoided)`)
         }
-        else {
+
+        if (!issue) {
           // Safe to create new dashboard
-          issue = await gitProvider.createIssue({
-            title: dashboardConfig.title || title,
-            body,
-            labels: dashboardConfig.labels || ['dependencies', 'dashboard'],
-            assignees: dashboardConfig.assignees,
-          })
+          issue = await gitProvider.createIssue(issueOptions)
           this.logger.success(`✅ Successfully created new dashboard issue #${issue.number}`)
         }
       }
 
+      // Pinning is cosmetic and capped at three issues per repository, so a
+      // refusal is reported but never fails the run.
+      if (dashboardConfig.pin !== undefined) {
+        if (!dashboardConfig.pin)
+          await gitProvider.unpinIssue(issue.number)
+        else if (supports(gitProvider, 'pinIssues', 'pinIssue'))
+          await gitProvider.pinIssue(issue.number)
+        else
+          this.logger.debug('📌 Provider does not support pinning issues; leaving the dashboard unpinned')
+      }
+
       this.logger.success(`✅ Dashboard updated: ${issue.url}`)
+      await this.events.emit('dashboard.updated', { number: issue.number, url: issue.url })
       return issue
     }
     catch (error) {
@@ -1310,13 +3488,14 @@ export class Buddy {
   /**
    * Collect all data needed for the dashboard
    */
-  private async collectDashboardData(gitProvider: GitHubProvider): Promise<DashboardData> {
+  private async collectDashboardData(gitProvider: GitProvider): Promise<DashboardData> {
     const [packageFiles, openPRs] = await Promise.all([
       this.scanner.scanProject(),
       gitProvider.getPullRequests('open'),
     ])
 
-    // Filter PRs to include all dependency updates (from any source: buddy-bot, renovate, etc.)
+    // Filter PRs to include all dependency updates (from any source: buddy, renovate, etc.)
+    // eslint-disable-next-line pickier/no-unused-vars -- pr IS used in the multi-line filter
     const dependencyPRs = openPRs.filter(pr =>
       // Include any PR that appears to be a dependency update
       pr.labels.includes('dependencies')
@@ -1329,7 +3508,8 @@ export class Buddy {
       || pr.title.toLowerCase().includes('renovate')
       || pr.head.includes('renovate/')
       || pr.head.includes('dependabot/')
-      || pr.head.includes('buddy-bot/')
+      || pr.head.includes('buddy/')
+      || isBuddyBranch(pr.head)
       || pr.head.includes('update-')
       || pr.head.includes('bump-'),
     )
@@ -1349,6 +3529,12 @@ export class Buddy {
     const deprecatedChecker = new DeprecatedDependenciesChecker()
     const deprecatedDependencies = await deprecatedChecker.checkDeprecatedDependencies(packageFiles)
 
+    // Check for known vulnerabilities in what is currently declared
+    const vulnerableDependencies = await this.findVulnerableDependencies(packageFiles)
+
+    // Report packages a dependant's range is holding back
+    const cappedDependencies = await this.findCappedDependencies(packageFiles)
+
     return {
       openPRs: dependencyPRs,
       detectedDependencies: {
@@ -1357,6 +3543,8 @@ export class Buddy {
         githubActions,
       },
       deprecatedDependencies,
+      vulnerableDependencies,
+      cappedDependencies,
       repository: {
         owner: this.config.repository!.owner,
         name: this.config.repository!.name,
@@ -1367,9 +3555,143 @@ export class Buddy {
   }
 
   /**
+   * Find packages held below their latest version by a range declared
+   * elsewhere in the dependency tree.
+   *
+   * Only capped packages are returned. A package that is merely behind its
+   * lockfile is fixed by the ordinary update path, so reporting it here would
+   * duplicate a pull request that already exists.
+   *
+   * @param packageFiles - Parsed manifests from the scan
+   * @returns Capped packages, worst gap first, empty when disabled
+   */
+  private async findCappedDependencies(packageFiles: PackageFile[]): Promise<Drift[]> {
+    if (this.config.packages?.detectResolutionDrift === false)
+      return []
+
+    try {
+      const { collectDriftInputs } = await import('./scanner/drift-collector')
+      const { findDrift } = await import('./scanner/resolution-drift')
+
+      const inputs = await collectDriftInputs(packageFiles, this.registryClient, this.projectPath, this.logger)
+      const capped = findDrift(inputs).filter(drift => drift.kind === 'capped')
+
+      if (capped.length > 0)
+        this.logger.info(`🔗 ${capped.length} package(s) capped by a dependant's range`)
+
+      return capped
+    }
+    catch (error) {
+      // Drift analysis is advisory; never fail a dashboard run over it.
+      this.logger.warn('Resolution drift analysis failed, continuing without it:', error)
+      return []
+    }
+  }
+
+  /**
+   * Find declared dependencies with known advisories against their current version.
+   *
+   * Unlike {@link annotateSecurityAdvisories}, which only reports advisories an
+   * available update resolves, this reports everything currently vulnerable —
+   * including packages with no fix released yet, which are exactly the ones a
+   * maintainer needs to know about.
+   *
+   * @param packageFiles - Parsed dependency files from the scan
+   * @returns Vulnerable dependencies, empty when advisory checks are disabled
+   */
+  private async findVulnerableDependencies(packageFiles: PackageFile[]): Promise<VulnerableDependency[]> {
+    if (this.config.security?.enabled === false)
+      return []
+
+    const queries: AdvisoryQuery[] = []
+    const sources = new Map<string, { name: string, currentVersion: string, ecosystem: string, file: string }>()
+
+    for (const file of packageFiles) {
+      for (const dependency of file.dependencies) {
+        const ecosystem = toOsvEcosystem(dependency.type)
+        if (!ecosystem)
+          continue
+
+        const version = dependency.currentVersion.replace(/^[\^~>=<\s]*v?/, '').trim()
+        if (!version)
+          continue
+
+        const query: AdvisoryQuery = { name: dependency.name, version, ecosystem }
+        const key = advisoryKey(query)
+        if (sources.has(key))
+          continue
+
+        sources.set(key, { name: dependency.name, currentVersion: dependency.currentVersion, ecosystem, file: file.path })
+        queries.push(query)
+      }
+    }
+
+    if (queries.length === 0)
+      return []
+
+    try {
+      const service = new SecurityAdvisoryService(this.logger)
+      const advisoriesByKey = await service.findAdvisories(queries)
+
+      const minimum = this.config.security?.minimumSeverity ?? 'low'
+      const rank: Record<string, number> = { low: 0, moderate: 1, high: 2, critical: 3 }
+
+      const vulnerable: VulnerableDependency[] = []
+      for (const [key, advisories] of advisoriesByKey) {
+        const source = sources.get(key)
+        if (!source)
+          continue
+
+        const relevant = advisories.filter(advisory => rank[advisory.severity] >= rank[minimum])
+        if (relevant.length > 0)
+          vulnerable.push({ ...source, advisories: relevant })
+      }
+
+      // Most severe first, so the dashboard table leads with what matters.
+      vulnerable.sort((a, b) => rank[b.advisories[0].severity] - rank[a.advisories[0].severity])
+      return vulnerable
+    }
+    catch (error) {
+      this.logger.warn('Vulnerability check failed, dashboard will omit it:', error)
+      return []
+    }
+  }
+
+  /**
+   * Update a dashboard issue, treating a missing issue as recoverable.
+   *
+   * The issue can disappear between lookup and update — it may have been deleted,
+   * transferred, or (before repository resolution was fixed) never have existed in
+   * this repository at all. Returning null lets the caller create a fresh dashboard
+   * instead of failing the whole run. Permission and other errors still throw, since
+   * creating a new issue would fail the same way.
+   *
+   * @returns The updated issue, or null when it no longer exists
+   */
+  private async updateDashboardIssue(
+    gitProvider: GitProvider,
+    issueNumber: number,
+    options: IssueOptions,
+  ): Promise<Issue | null> {
+    try {
+      return await gitProvider.updateIssue(issueNumber, options)
+    }
+    catch (error) {
+      if (error instanceof GitHubApiError && error.isNotFound) {
+        this.logger.warn(
+          `Dashboard issue #${issueNumber} no longer exists in ${error.repository} `
+          + `(${error.status}); creating a replacement dashboard instead.`,
+        )
+        return null
+      }
+      throw error
+    }
+  }
+
+  /**
    * Find existing dashboard issue
    */
-  private async findExistingDashboard(gitProvider: GitHubProvider, issueNumber?: number): Promise<Issue | null> {
+  private async findExistingDashboard(gitProvider: GitProvider, issueNumber?: number): Promise<Issue | null> {
     try {
       this.logger.info('Searching for existing dashboard issue...')
 
@@ -1396,10 +3718,18 @@ export class Buddy {
       for (const issue of issues) {
         const hasRequiredLabels = issue.labels.includes('dashboard') && issue.labels.includes('dependencies')
         const titleMatches = issue.title.toLowerCase().includes('dependency dashboard')
-        const bodyHasMarker = issue.body.includes('This issue lists Buddy Bot updates and detected dependencies')
+        const bodyHasMarker = issue.body.includes('This issue lists Buddy updates and detected dependencies')
 
-        // Be more strict: require both proper labels AND (title match OR body marker)
-        if (hasRequiredLabels && (titleMatches || bodyHasMarker)) {
+        // The body marker alone is definitive: buddy writes it and nobody
+        // types it by hand. Requiring labels as well made a dashboard whose
+        // labels a maintainer removed permanently unfindable, so every run
+        // opened a fresh one — which is how duplicates accumulate.
+        //
+        // Labels plus a title match still count, for dashboards created before
+        // the marker existed. A title match on its own deliberately does not:
+        // another tool's "Dependency Dashboard" is not ours, and adopting one
+        // would overwrite it.
+        if (bodyHasMarker || (hasRequiredLabels && titleMatches)) {
           this.logger.info(`Found existing dashboard issue #${issue.number}: ${issue.title}`)
           this.logger.info(`  - Labels: ${issue.labels.join(', ')}`)
           this.logger.info(`  - Title matches: ${titleMatches}`)
@@ -1429,8 +3759,21 @@ export class Buddy {
       return null
     }
     catch (error) {
-      this.logger.warn(`Failed to search for existing dashboard: ${error}`)
-      return null
+      // "Found nothing" and "the lookup failed" must not collapse to the same
+      // value. The caller treats null as "no dashboard exists" and creates one,
+      // so a transient 5xx, timeout or secondary rate-limit on getIssues() would
+      // open a duplicate dashboard and still exit 0 - permanent damage from a
+      // momentary failure.
+      //
+      // Both call sites reach this: the initial lookup and the pre-create race
+      // check. The race check in particular was no protection at all while it
+      // failed open, because whatever broke the first lookup is usually still
+      // broken a moment later.
+      //
+      // A failed run is recoverable - the next scheduled run retries. A duplicate
+      // dashboard is not: someone has to notice it and close it by hand.
+      this.logger.error(`Failed to search for existing dashboard: ${error}`)
+      throw error
     }
   }
 }

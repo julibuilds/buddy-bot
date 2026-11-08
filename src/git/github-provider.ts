@@ -1,18 +1,241 @@
-/* eslint-disable no-console */
-import type { FileChange, GitProvider, Issue, IssueOptions, PullRequest, PullRequestOptions } from '../types'
+import type { FileChange, Issue, IssueOptions, PullRequest, PullRequestOptions } from '../types'
+import type { Logger } from '../utils/logger'
+import type { GitProvider, ListWorkflowRunsOptions, ProviderCapabilities, ReviewThread, WorkflowRun } from './provider'
 import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
 import process from 'node:process'
+import { getGitHubApiUrl } from '../utils/endpoints'
+import { formatError, GitHubApiError } from '../utils/errors'
+import { assertUpdateTargetsExist, FileChangeValidationError, normalizeRepositoryPath } from '../utils/file-changes'
+import { fetchWithTimeout } from '../utils/http'
+import { detectRequiredPackageManagers, getAllLockFilePaths, nestedLockProjects, regenerateLockFile } from '../utils/lock-file'
+import { getDefaultLogger } from '../utils/logger'
+import { isBuddyBranch } from '../utils/branches'
+
+// Match GitHub token formats (ghp_*, gho_*, ghs_*, ghu_*, ghr_*, github_pat_*)
+// plus any 40+ char alphanumeric blob that looks like a credential.
+const TOKEN_PATTERN = /\b(?:gh[pousr]_[A-Z0-9_]{20,}|github_pat_[A-Z0-9_]{20,}|[A-Z0-9]{40,})\b/gi
+
+/**
+ * Map GitHub's run status onto the three this codebase uses.
+ *
+ * Anything unrecognised reads as `queued` rather than `completed`: an unknown
+ * state must not be mistaken for a finished one.
+ */
+function runStatus(raw: unknown): WorkflowRun['status'] {
+  return raw === 'completed' || raw === 'in_progress' ? raw : 'queued'
+}
+
+/**
+ * Map GitHub's conclusion vocabulary onto the four this codebase uses.
+ *
+ * `timed_out` and `action_required` collapse into `failure`, which is how
+ * `getPullRequestChecksState` already treats them — a run that timed out did
+ * not pass, and a caller reasoning about red builds should see it as red.
+ */
+function runConclusion(raw: unknown): WorkflowRun['conclusion'] {
+  if (typeof raw !== 'string')
+    return null
+
+  if (raw === 'success' || raw === 'cancelled')
+    return raw
+
+  if (raw === 'failure' || raw === 'timed_out' || raw === 'action_required')
+    return 'failure'
+
+  return 'skipped'
+}
+
+function sanitizeStderr(stderr: string, token?: string): string {
+  let out = stderr.replace(TOKEN_PATTERN, '[REDACTED]')
+  if (token && token.length >= 8)
+    out = out.split(token).join('[REDACTED]')
+  return out
+}
+
+// Minimal shapes for the GitHub REST responses buddy consumes. These exist
+// to replace scattered `as any` casts with narrowed types at the API boundary.
+interface GitHubUser { login: string }
+interface GitHubLabel { name: string }
+interface GitHubRef { ref: string }
+interface GitHubPullResponse {
+  number: number
+  title: string
+  body: string | null
+  head: GitHubRef
+  base: GitHubRef
+  state: string
+  html_url: string
+  created_at: string
+  updated_at: string
+  merged_at: string | null
+  draft: boolean
+  user: GitHubUser
+  requested_reviewers?: GitHubUser[]
+  assignees?: GitHubUser[]
+  labels?: GitHubLabel[]
+}
+
+/**
+ * Thrown when lockfile regeneration fails. Not a transient git error —
+ * must bubble past the API fallback so we don't silently open a PR with
+ * stale lockfiles.
+ */
+class LockfileRegenerationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LockfileRegenerationError'
+  }
+}
+
+/**
+ * `git -c` arguments that make git authenticate as `token` against `serverUrl`.
+ *
+ * actions/checkout persists its token as `http.<server>/.extraheader`, which
+ * git sends on every request. Header values accumulate, so the empty value
+ * resets the list before the replacement is added.
+ */
+export function gitAuthConfigArgs(serverUrl: string, token: string): string[] {
+  const key = `http.${serverUrl.replace(/\/+$/, '')}/.extraheader`
+  const basic = Buffer.from(`x-access-token:${token}`).toString('base64')
+  return ['-c', `${key}=`, '-c', `${key}=AUTHORIZATION: basic ${basic}`]
+}
+
+/**
+ * Thrown when GitHub refuses a push because the token may not touch
+ * `.github/workflows/` - a GitHub App without the Workflows permission, or a
+ * PAT without the `workflow` scope. The API path is refused for the same
+ * reason, so falling back to it only turns a permission gap into a failed run.
+ */
+export class WorkflowPermissionError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'WorkflowPermissionError'
+  }
+}
+
+/** Whether a push was refused for touching workflow files without permission. */
+export function isWorkflowPermissionRefusal(error: unknown): boolean {
+  const text = `${formatError(error)} ${(error as { message?: string })?.message ?? ''}`
+  return /refusing to allow (?:a GitHub App|an OAuth App|a Personal Access Token)[^\n]*workflow/i.test(text)
+}
+
+
+/**
+ * Whether GitHub refused to open a pull request because the token is not
+ * allowed to, as opposed to anything wrong with the pull request itself.
+ */
+function isPullRequestCreationForbidden(error: unknown): boolean {
+  const text = `${formatError(error)} ${(error as { message?: string })?.message ?? ''}`
+  return /not permitted to create or approve pull requests/i.test(text)
+    || ((error as { status?: number })?.status === 403 && /pull/i.test(text))
+}
 
 export class GitHubProvider implements GitProvider {
-  private readonly apiUrl = 'https://api.github.com'
+  /**
+   * REST API base URL. Resolved once per instance from `GITHUB_API_URL` or an
+   * explicit override, so the same code path serves github.com and GitHub
+   * Enterprise Server.
+   */
+  private readonly apiUrl: string
+
+  // In-memory cache for API responses (reduces redundant API calls within a single workflow run)
+  private cache: {
+    pullRequests: Map<string, { data: PullRequest[], timestamp: number }>
+    issues: Map<string, { data: Issue[], timestamp: number }>
+  } = {
+    pullRequests: new Map(),
+    issues: new Map(),
+  }
+
+  // Cache TTL in milliseconds. Kept short (2 minutes) because the cache is
+  // per-instance: a different workflow run has its own cache anyway, so a long
+  // TTL just risks serving stale data (e.g. missing a PR that another parallel
+  // run just created). Duplicate-PR prevention is handled by the workflow-level
+  // `concurrency:` group, not by extending this cache.
+  private readonly cacheTTL = 2 * 60 * 1000
+
+  /** Where this provider's progress output goes. */
+  private readonly logger: Logger
 
   constructor(
     private readonly token: string,
     private readonly owner: string,
     private readonly repo: string,
     private readonly hasWorkflowPermissions: boolean = false,
-  ) {}
+    private readonly workflowToken?: string,
+    /** Overrides the API base URL; defaults to the environment-derived value. */
+    apiUrl?: string,
+    /** Logger to use; defaults to the process-wide default. */
+    logger?: Logger,
+  ) {
+    this.apiUrl = apiUrl ? apiUrl.replace(/\/+$/, '') : getGitHubApiUrl()
+    this.logger = logger ?? getDefaultLogger()
+  }
+
+  /**
+   * What this provider supports.
+   *
+   * Every flag is true: GitHub is the platform the feature set was designed
+   * against, so this method exists to let callers gate on capabilities rather
+   * than on `provider instanceof GitHubProvider`. `checkRuns` is reported
+   * true even though a default `GITHUB_TOKEN` may lack `checks: write` —
+   * capability describes the API, and the permission failure is handled where
+   * it happens, by logging rather than throwing.
+   */
+  capabilities(): ProviderCapabilities {
+    return {
+      pinIssues: true,
+      checkRuns: true,
+      inlineReviewComments: true,
+      reviewSuggestions: true,
+      nativeAutoMerge: true,
+      commentReactions: true,
+      ciLogs: true,
+      ciRuns: true,
+      reviewThreads: true,
+      teamReviewers: true,
+      draftPullRequests: true,
+      permissionLookup: true,
+      branchHousekeeping: true,
+      reopenPullRequests: true,
+      labels: true,
+    }
+  }
+
+  /**
+   * Check if cached data is still valid
+   */
+  private isCacheValid(timestamp: number): boolean {
+    return Date.now() - timestamp < this.cacheTTL
+  }
+
+  /**
+   * Clear all caches (useful when data is modified)
+   */
+  clearCache(): void {
+    this.cache.pullRequests.clear()
+    this.cache.issues.clear()
+  }
+
+  /**
+   * Check if a branch exists in the repository
+   */
+  async branchExists(branchName: string): Promise<boolean> {
+    try {
+      await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/git/ref/heads/${branchName}`)
+      return true
+    }
+    catch (error: any) {
+      // 404 means branch doesn't exist
+      if (error.message?.includes('404'))
+        return false
+
+      // For other errors, log and return false (conservative approach)
+      this.logger.warn(`⚠️ Error checking branch ${branchName}: ${formatError(error)}`)
+      return false
+    }
+  }
 
   async createBranch(branchName: string, baseBranch: string): Promise<void> {
     try {
@@ -26,113 +249,160 @@ export class GitHubProvider implements GitProvider {
         sha: baseSha,
       })
 
-      console.log(`✅ Created branch ${branchName} from ${baseBranch}`)
+      this.logger.info(`✅ Created branch ${branchName} from ${baseBranch}`)
     }
     catch (error) {
-      console.error(`❌ Failed to create branch ${branchName}:`, error)
+      this.logger.error(`❌ Failed to create branch ${branchName}: ${formatError(error)}`)
       throw error
     }
   }
 
-  async commitChanges(branchName: string, message: string, files: FileChange[]): Promise<void> {
+  async commitChanges(branchName: string, message: string, files: FileChange[], baseBranch: string = 'main'): Promise<void> {
     // Try Git CLI first for better compatibility with GitHub Actions permissions
     try {
-      await this.commitChangesWithGit(branchName, message, files)
+      await this.commitChangesWithGit(branchName, message, files, baseBranch)
     }
     catch (gitError) {
-      console.warn(`⚠️ Git CLI commit failed, falling back to GitHub API: ${gitError}`)
-      await this.commitChangesWithAPI(branchName, message, files)
+      // Lockfile regeneration failures must NOT fall through to the API path —
+      // the API path can't regenerate lockfiles either, so it would just produce
+      // a PR with an updated manifest and stale lockfile. Bubble the error up.
+      if (gitError instanceof LockfileRegenerationError || gitError instanceof FileChangeValidationError)
+        throw gitError
+
+      // The token cannot write workflow files. Commit what it can write, or
+      // report the gap; the API path would be refused too.
+      if (isWorkflowPermissionRefusal(gitError)) {
+        const nonWorkflowFiles = files.filter(f => !f.path.includes('.github/workflows/'))
+        const workflowCount = files.length - nonWorkflowFiles.length
+        if (nonWorkflowFiles.length === 0) {
+          throw new WorkflowPermissionError(
+            `The token may not update workflow files (${workflowCount} in this change). `
+            + 'Grant the GitHub App the Workflows permission, or use a PAT with the workflow scope as BUDDY_TOKEN.',
+          )
+        }
+        this.logger.warn(`⚠️ The token may not update workflow files; committing the ${nonWorkflowFiles.length} other file(s) without the ${workflowCount} workflow file(s)`)
+        await this.commitChangesWithGit(branchName, message, nonWorkflowFiles, baseBranch)
+        return
+      }
+
+      this.logger.warn(`⚠️ Git CLI commit failed, falling back to GitHub API: ${gitError}`)
+      await this.commitChangesWithAPI(branchName, message, files, baseBranch)
     }
   }
 
-  private async commitChangesWithGit(branchName: string, message: string, files: FileChange[]): Promise<void> {
+  private async commitChangesWithGit(branchName: string, message: string, files: FileChange[], baseBranch: string = 'main'): Promise<void> {
     try {
       // Handle workflow files based on token permissions
       const workflowFiles = files.filter(f => f.path.includes('.github/workflows/'))
       const nonWorkflowFiles = files.filter(f => !f.path.includes('.github/workflows/'))
 
       if (workflowFiles.length > 0 && !this.hasWorkflowPermissions) {
-        console.warn(`⚠️ Detected ${workflowFiles.length} workflow file(s). These require elevated permissions.`)
-        console.warn(`⚠️ Workflow files: ${workflowFiles.map(f => f.path).join(', ')}`)
-        console.warn(`ℹ️ Workflow files will be skipped in this commit. BUDDY_BOT_TOKEN not detected or lacks workflow permissions.`)
+        this.logger.warn(`⚠️ Detected ${workflowFiles.length} workflow file(s). These require elevated permissions.`)
+        this.logger.warn(`⚠️ Workflow files: ${workflowFiles.map(f => f.path).join(', ')}`)
+        this.logger.warn(`ℹ️ Workflow files will be skipped in this commit. BUDDY_TOKEN not detected or lacks workflow permissions.`)
 
         // If we have non-workflow files, commit just those
         if (nonWorkflowFiles.length > 0) {
-          console.log(`📝 Committing ${nonWorkflowFiles.length} non-workflow files...`)
+          this.logger.info(`📝 Committing ${nonWorkflowFiles.length} non-workflow files...`)
           files = nonWorkflowFiles
         }
         else {
-          console.warn(`⚠️ All files are workflow files. No files will be committed in this PR.`)
-          console.warn(`💡 To update workflow files, ensure BUDDY_BOT_TOKEN is set with workflow:write permissions.`)
+          this.logger.warn(`⚠️ All files are workflow files. No files will be committed in this PR.`)
+          this.logger.warn(`💡 To update workflow files, ensure BUDDY_TOKEN is set with workflow:write permissions.`)
           // Don't return early - we'll create an empty commit to avoid "No commits between branches" error
-          console.log(`📝 Creating empty commit to avoid "No commits between branches" error...`)
+          this.logger.info(`📝 Creating empty commit to avoid "No commits between branches" error...`)
           try {
             await this.runCommand('git', ['commit', '--allow-empty', '-m', 'Workflow files require elevated permissions - no changes committed'])
-            console.log(`✅ Created empty commit for workflow-only PR`)
+            this.logger.info(`✅ Created empty commit for workflow-only PR`)
           }
           catch (error) {
-            console.warn(`⚠️ Failed to create empty commit: ${error}`)
+            this.logger.warn(`⚠️ Failed to create empty commit: ${error}`)
             // Try to create a minimal README update instead
             try {
               const readmePath = 'README.md'
-              const fs = await import('node:fs')
-              if (fs.existsSync(readmePath)) {
-                const content = fs.readFileSync(readmePath, 'utf-8')
-                const updatedContent = `${content}\n\n<!-- Updated by Buddy Bot -->\n`
-                fs.writeFileSync(readmePath, updatedContent)
+              const readmeFile = Bun.file(readmePath)
+              if (await readmeFile.exists()) {
+                const content = await readmeFile.text()
+                const updatedContent = `${content}\n\n<!-- Updated by Buddy -->\n`
+                await Bun.write(readmePath, updatedContent)
                 await this.runCommand('git', ['add', readmePath])
                 await this.runCommand('git', ['commit', '-m', 'Update README for workflow-only PR'])
-                console.log(`✅ Created README update for workflow-only PR`)
+                this.logger.info(`✅ Created README update for workflow-only PR`)
               }
             }
             catch (readmeError) {
-              console.error(`❌ Failed to create any commit: ${readmeError}`)
+              this.logger.error(`❌ Failed to create any commit: ${readmeError}`)
             }
           }
           return
         }
       }
       else if (workflowFiles.length > 0) {
-        console.log(`✅ Including ${workflowFiles.length} workflow file(s) with elevated permissions`)
+        this.logger.info(`✅ Including ${workflowFiles.length} workflow file(s) with elevated permissions`)
       }
 
       // Configure Git identity to ensure github-actions[bot] attribution
       try {
         await this.runCommand('git', ['config', 'user.name', 'github-actions[bot]'])
         await this.runCommand('git', ['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'])
-        console.log('✅ Git identity configured for github-actions[bot]')
+        this.logger.info('✅ Git identity configured for github-actions[bot]')
       }
       catch (error) {
-        console.warn('⚠️ Failed to configure Git identity:', error)
+        this.logger.warn('⚠️ Failed to configure Git identity:', error)
         // Continue anyway as it might already be configured
       }
 
       // Fetch latest changes
       await this.runCommand('git', ['fetch', 'origin'])
 
-      // For rebase operations, reset the branch to main and apply changes fresh
-      // This prevents merge conflicts by starting with a clean slate
-      console.log(`🔄 Resetting ${branchName} to main for clean rebase...`)
+      // Renovate-style branch recreation: reset the PR branch to the base branch tip,
+      // then apply dependency file changes fresh on top. This completely eliminates
+      // merge conflicts because there's nothing to merge — we start from a clean base
+      // and just write the dependency file changes on top.
+      this.logger.info(`🔄 Recreating ${branchName} from origin/${baseBranch} (Renovate-style)...`)
 
-      // Checkout main first and reset working directory to clean state
-      await this.runCommand('git', ['checkout', 'main'])
-      await this.runCommand('git', ['reset', '--hard', 'HEAD'])
-      await this.runCommand('git', ['clean', '-fd'])
-
-      // Reset the branch to main (delete and recreate)
+      // Ensure we're on the PR branch (create if it doesn't exist)
       try {
-        await this.runCommand('git', ['branch', '-D', branchName])
+        await this.runCommand('git', ['checkout', branchName])
       }
       catch {
-        // Branch might not exist locally, that's ok
+        try {
+          await this.runCommand('git', ['checkout', '-b', branchName, `origin/${branchName}`])
+        }
+        catch {
+          await this.runCommand('git', ['checkout', '-b', branchName])
+        }
       }
 
-      // Create fresh branch from main
-      await this.runCommand('git', ['checkout', '-b', branchName])
+      // Reset the PR branch to the base branch tip — this is the key Renovate-style move.
+      // Instead of merging main into the PR branch (which causes conflicts),
+      // we simply point the branch at main's HEAD and apply our changes fresh.
+      await this.runCommand('git', ['reset', '--hard', `origin/${baseBranch}`])
+      await this.runCommand('git', ['clean', '-fd'])
+      this.logger.info(`✅ Reset ${branchName} to origin/${baseBranch}`)
+
+      await assertUpdateTargetsExist(files, async (cleanPath) => {
+        try {
+          await this.runCommand('git', ['cat-file', '-e', `origin/${baseBranch}:${cleanPath}`])
+          return true
+        }
+        catch {
+          return false
+        }
+      })
 
       // Apply file changes
       for (const file of files) {
-        const cleanPath = file.path.replace(/^\.\//, '').replace(/^\/+/, '')
+        const cleanPath = normalizeRepositoryPath(file.path)
+
+        // Safety check: prevent writing to sensitive files during tests
+        if (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test') {
+          const sensitiveFiles = ['package.json', 'bun.lock', 'bun.lockb', 'package-lock.json', 'yarn.lock']
+          if (sensitiveFiles.includes(cleanPath) && file.content === '{"name":"x"}') {
+            this.logger.warn(`⚠️ Skipping test file write to ${cleanPath} to prevent overwriting project files`)
+            continue
+          }
+        }
 
         if (file.type === 'delete') {
           try {
@@ -143,81 +413,172 @@ export class GitHubProvider implements GitProvider {
           }
         }
         else {
-          // Write file content
-          const fs = await import('node:fs')
-          const path = await import('node:path')
-
-          // Ensure directory exists
-          const dir = path.dirname(cleanPath)
-          if (dir !== '.') {
-            fs.mkdirSync(dir, { recursive: true })
-          }
-
-          fs.writeFileSync(cleanPath, file.content, 'utf8')
+          // Bun.write creates parent directories automatically and is async
+          await Bun.write(cleanPath, file.content)
           await this.runCommand('git', ['add', cleanPath])
         }
       }
 
-      // Check if there are changes to commit
+      // Regenerate lock files after manifest changes (skip in test environments).
+      // We HARD-FAIL if regeneration fails for any required manager: a PR with an
+      // updated manifest but stale lockfile is a correctness bug — consumers will
+      // install the wrong versions. Fail loudly so the caller can retry or
+      // investigate instead of silently opening a broken PR.
+      const isTestEnv = process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test'
+      if (!isTestEnv) {
+        const updatedPaths = files.map(f => f.path.replace(/^\.\//, '').replace(/^\/+/, ''))
+        const requiredManagers = detectRequiredPackageManagers(updatedPaths)
+
+        if (requiredManagers.length > 0) {
+          this.logger.info(`🔒 Regenerating lock files for: ${requiredManagers.join(', ')}`)
+          const cwd = process.cwd()
+          const failures: string[] = []
+
+          for (const manager of requiredManagers) {
+            try {
+              const result = await regenerateLockFile(manager, cwd)
+              if (result.success) {
+                // Stage any regenerated lock files
+                for (const lockFile of getAllLockFilePaths()) {
+                  try {
+                    await this.runCommand('git', ['add', lockFile])
+                  }
+                  catch {
+                    // Lock file may not exist for this manager, that's fine
+                  }
+                }
+              }
+              else {
+                failures.push(`${manager}: ${result.message}`)
+              }
+            }
+            catch (lockError) {
+              failures.push(`${manager}: ${lockError instanceof Error ? lockError.message : String(lockError)}`)
+            }
+          }
+
+          // Projects with a lock file of their own beside a changed manifest
+          // are separate installs; the root install does not touch them.
+          for (const project of nestedLockProjects(updatedPaths, cwd)) {
+            try {
+              const result = await regenerateLockFile(project.manager, `${cwd}/${project.dir}`)
+              if (result.success)
+                await this.runCommand('git', ['add', project.lockFile])
+              else
+                failures.push(`${project.dir} (${project.manager}): ${result.message}`)
+            }
+            catch (lockError) {
+              failures.push(`${project.dir} (${project.manager}): ${lockError instanceof Error ? lockError.message : String(lockError)}`)
+            }
+          }
+
+          if (failures.length > 0) {
+            const detail = failures.map(f => `  - ${f}`).join('\n')
+            throw new LockfileRegenerationError(
+              `Lock file regeneration failed; refusing to open PR with stale lockfiles.\n${detail}`,
+            )
+          }
+        }
+      }
+
+      // Check if there are changes to commit against the current branch tip
       const status = await this.runCommand('git', ['status', '--porcelain'])
       if (status.trim()) {
         // Commit changes
         await this.runCommand('git', ['commit', '-m', message])
 
-        // Force push changes to overwrite the existing branch
-        await this.runCommand('git', ['push', 'origin', branchName, '--force'])
+        // Force-push is required because we recreated the branch from base (Renovate-style).
+        // Use --force-with-lease for safety — it will fail if someone else pushed to the
+        // branch concurrently, preventing accidental overwrites.
+        // Push with BUDDY_TOKEN whenever there is one, not only for workflow
+        // files: GitHub runs no workflows for a push made with GITHUB_TOKEN, so
+        // a branch buddy refreshed with it never had its CI re-run and kept
+        // the old result, or none at all.
+        const pushToken = this.workflowToken || undefined
+        await this.runCommand('git', ['push', 'origin', branchName, '--force-with-lease'], pushToken)
 
-        console.log(`✅ Successfully rebased ${branchName} with fresh changes: ${message}`)
+        this.logger.info(`✅ Successfully recreated ${branchName} with fresh changes from ${baseBranch}: ${message}`)
       }
       else {
-        console.log(`ℹ️ No changes to commit for ${branchName}`)
+        // SAFETY: Do NOT push when there are no file changes after resetting to base.
+        // If we push now, the branch would be at the exact same commit as main,
+        // and GitHub would auto-close the PR thinking it was merged.
+        // This can happen when:
+        //   1. The dependency changes were already merged to main
+        //   2. commitChanges was called with an empty file list
+        // In both cases, the right thing is to leave the branch alone.
+        this.logger.info(`ℹ️ No file changes after resetting to ${baseBranch} — skipping push to prevent PR auto-close`)
       }
     }
     catch (error) {
-      console.error(`❌ Failed to commit changes to ${branchName} with Git CLI:`, error)
+      this.logger.error(`❌ Failed to commit changes to ${branchName} with Git CLI: ${formatError(error)}`)
       throw error
     }
   }
 
-  private async commitChangesWithAPI(branchName: string, message: string, files: FileChange[]): Promise<void> {
+  private async commitChangesWithAPI(branchName: string, message: string, files: FileChange[], baseBranch: string = 'main'): Promise<void> {
     try {
       // Handle workflow files based on token permissions
       const workflowFiles = files.filter(f => f.path.includes('.github/workflows/'))
       const nonWorkflowFiles = files.filter(f => !f.path.includes('.github/workflows/'))
 
       if (workflowFiles.length > 0 && !this.hasWorkflowPermissions) {
-        console.warn(`⚠️ Detected ${workflowFiles.length} workflow file(s). These require elevated permissions.`)
-        console.warn(`⚠️ Workflow files: ${workflowFiles.map(f => f.path).join(', ')}`)
-        console.warn(`ℹ️ Workflow files will be skipped in this commit. Consider using a GitHub App with workflow permissions for workflow updates.`)
+        this.logger.warn(`⚠️ Detected ${workflowFiles.length} workflow file(s). These require elevated permissions.`)
+        this.logger.warn(`⚠️ Workflow files: ${workflowFiles.map(f => f.path).join(', ')}`)
+        this.logger.warn(`ℹ️ Workflow files will be skipped in this commit. Consider using a GitHub App with workflow permissions for workflow updates.`)
 
         // If we have non-workflow files, commit just those
         if (nonWorkflowFiles.length > 0) {
-          console.log(`📝 Committing ${nonWorkflowFiles.length} non-workflow files...`)
+          this.logger.info(`📝 Committing ${nonWorkflowFiles.length} non-workflow files...`)
           files = nonWorkflowFiles
         }
         else {
-          console.warn(`⚠️ All files are workflow files. No files will be committed in this PR.`)
-          console.warn(`💡 To update workflow files, consider using a GitHub App with appropriate permissions.`)
+          this.logger.warn(`⚠️ All files are workflow files. No files will be committed in this PR.`)
+          this.logger.warn(`💡 To update workflow files, consider using a GitHub App with appropriate permissions.`)
           return // Exit early if no non-workflow files to commit
         }
       }
       else if (workflowFiles.length > 0) {
-        console.log(`✅ Including ${workflowFiles.length} workflow file(s) with elevated permissions`)
+        this.logger.info(`✅ Including ${workflowFiles.length} workflow file(s) with elevated permissions`)
       }
 
-      // Get current branch SHA
-      const branchRef = await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/git/ref/heads/${branchName}`)
-      const currentSha = branchRef.object.sha
+      // Note: Lock files cannot be regenerated when committing via the API path
+      // because there is no local filesystem to run install commands against.
+      const hasManifestFiles = files.some(f =>
+        f.path.endsWith('package.json') || f.path.endsWith('composer.json'),
+      )
+      if (hasManifestFiles) {
+        this.logger.warn(`⚠️ Committing manifest files via API — lock files will not be updated.`)
+        this.logger.warn(`   Lock file regeneration requires the Git CLI commit path (local filesystem).`)
+      }
 
-      // Get current tree
-      const currentCommit = await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/git/commits/${currentSha}`)
-      const currentTreeSha = currentCommit.tree.sha
+      // Renovate-style: base the new commit on the base branch (e.g. main), not the PR branch.
+      // This recreates the branch from scratch, eliminating any merge conflicts.
+      this.logger.info(`🔄 Recreating ${branchName} from ${baseBranch} via API (Renovate-style)...`)
+      const baseRef = await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/git/ref/heads/${baseBranch}`)
+      const baseSha = baseRef.object.sha
+
+      // Get base branch tree
+      const baseCommit = await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/git/commits/${baseSha}`)
+      const baseTreeSha = baseCommit.tree.sha
+
+      await assertUpdateTargetsExist(files, async (cleanPath) => {
+        const encodedPath = cleanPath.split('/').map(segment => encodeURIComponent(segment)).join('/')
+        try {
+          await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/contents/${encodedPath}?ref=${encodeURIComponent(baseBranch)}`)
+          return true
+        }
+        catch (error: any) {
+          if (error.message?.includes('404'))
+            return false
+          throw error
+        }
+      })
 
       // Create new tree with file changes
       const tree = []
       for (const file of files) {
-        // Ensure path doesn't start with ./ or have leading slashes (GitHub API requires clean relative paths)
-        const cleanPath = file.path.replace(/^\.\//, '').replace(/^\/+/, '')
+        const cleanPath = normalizeRepositoryPath(file.path)
 
         if (file.type === 'delete') {
           tree.push({
@@ -244,15 +605,23 @@ export class GitHubProvider implements GitProvider {
       }
 
       const newTree = await this.apiRequest(`POST /repos/${this.owner}/${this.repo}/git/trees`, {
-        base_tree: currentTreeSha,
+        base_tree: baseTreeSha,
         tree,
       })
 
-      // Create new commit with explicit github-actions[bot] author
+      // SAFETY: If the tree matches base, the dependency changes are already in main.
+      // Do NOT update the branch ref — pointing it at main's SHA would make GitHub
+      // auto-close the PR thinking it was merged.
+      if (newTree.sha === baseTreeSha) {
+        this.logger.info(`ℹ️ No file changes relative to ${baseBranch} — skipping push to prevent PR auto-close`)
+        return
+      }
+
+      // Create new commit parented to the base branch SHA (Renovate-style: single commit on top of base)
       const newCommit = await this.apiRequest(`POST /repos/${this.owner}/${this.repo}/git/commits`, {
         message,
         tree: newTree.sha,
-        parents: [currentSha],
+        parents: [baseSha],
         author: {
           name: 'github-actions[bot]',
           email: '41898282+github-actions[bot]@users.noreply.github.com',
@@ -263,15 +632,16 @@ export class GitHubProvider implements GitProvider {
         },
       })
 
-      // Update branch reference
+      // Force-update branch reference (required since we're recreating from base branch)
       await this.apiRequest(`PATCH /repos/${this.owner}/${this.repo}/git/refs/heads/${branchName}`, {
         sha: newCommit.sha,
+        force: true,
       })
 
-      console.log(`✅ Committed changes to ${branchName}: ${message}`)
+      this.logger.info(`✅ Committed changes to ${branchName}: ${message}`)
     }
     catch (error) {
-      console.error(`❌ Failed to commit changes to ${branchName}:`, error)
+      this.logger.error(`❌ Failed to commit changes to ${branchName}: ${formatError(error)}`)
       throw error
     }
   }
@@ -282,8 +652,32 @@ export class GitHubProvider implements GitProvider {
       return await this.createPullRequestWithCLI(options)
     }
     catch (cliError) {
-      console.warn(`⚠️ GitHub CLI failed, falling back to API: ${cliError}`)
+      this.logger.warn(`⚠️ GitHub CLI failed, falling back to API: ${cliError}`)
+    }
+
+    try {
       return await this.createPullRequestWithAPI(options)
+    }
+    catch (apiError) {
+      if (!isPullRequestCreationForbidden(apiError))
+        throw apiError
+
+      // A repository can forbid GITHUB_TOKEN from opening pull requests
+      // (Settings > Actions > General > "Allow GitHub Actions to create and
+      // approve pull requests", off by default). The branch is already pushed,
+      // so the PAT can open the PR instead, and a PR opened by a PAT also runs
+      // the repository's CI, which one opened by GITHUB_TOKEN never does.
+      if (this.workflowToken && this.workflowToken !== this.token) {
+        this.logger.info('🔑 GITHUB_TOKEN may not open pull requests in this repository, retrying with BUDDY_TOKEN')
+        return await this.createPullRequestWithAPI(options, this.workflowToken)
+      }
+
+      throw new Error(
+        'GitHub Actions may not open pull requests in this repository. Either set a BUDDY_TOKEN '
+        + 'repository secret (a token with contents, pull requests and workflows write access), or enable '
+        + 'Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests".',
+        { cause: apiError },
+      )
     }
   }
 
@@ -311,7 +705,7 @@ export class GitHubProvider implements GitProvider {
       }
 
       if (options.reviewers && options.reviewers.length > 0) {
-        console.log(`🔍 Adding reviewers via CLI: ${options.reviewers.join(', ')}`)
+        this.logger.info(`🔍 Adding reviewers via CLI: ${options.reviewers.join(', ')}`)
         args.push('--reviewer', options.reviewers.join(','))
       }
 
@@ -334,7 +728,7 @@ export class GitHubProvider implements GitProvider {
       const prNumber = Number.parseInt(prUrlMatch[1])
       const prUrl = prUrlMatch[0]
 
-      console.log(`✅ Created PR #${prNumber}: ${options.title}`)
+      this.logger.info(`✅ Created PR #${prNumber}: ${options.title}`)
 
       // Add labels via API after PR creation to handle missing labels gracefully
       if (options.labels && options.labels.length > 0) {
@@ -342,10 +736,10 @@ export class GitHubProvider implements GitProvider {
           await this.apiRequest(`POST /repos/${this.owner}/${this.repo}/issues/${prNumber}/labels`, {
             labels: options.labels,
           })
-          console.log(`✅ Added labels to PR #${prNumber}: ${options.labels.join(', ')}`)
+          this.logger.info(`✅ Added labels to PR #${prNumber}: ${options.labels.join(', ')}`)
         }
         catch (labelError) {
-          console.warn(`⚠️ Failed to add labels: ${labelError}`)
+          this.logger.warn(`⚠️ Failed to add labels: ${labelError}`)
           // Try to add labels one by one to handle missing labels gracefully
           for (const label of options.labels) {
             try {
@@ -354,7 +748,7 @@ export class GitHubProvider implements GitProvider {
               })
             }
             catch (singleLabelError) {
-              console.warn(`⚠️ Failed to add label '${label}': ${singleLabelError}`)
+              this.logger.warn(`⚠️ Failed to add label '${label}': ${singleLabelError}`)
             }
           }
         }
@@ -378,7 +772,7 @@ export class GitHubProvider implements GitProvider {
       }
     }
     catch (error) {
-      console.error(`❌ Failed to create PR with GitHub CLI: ${options.title}`, error)
+      this.logger.error(`❌ Failed to create PR with GitHub CLI: ${options.title}: ${formatError(error)}`)
       throw error
     }
   }
@@ -386,7 +780,7 @@ export class GitHubProvider implements GitProvider {
   /**
    * Create pull request using GitHub API (fallback)
    */
-  private async createPullRequestWithAPI(options: PullRequestOptions): Promise<PullRequest> {
+  private async createPullRequestWithAPI(options: PullRequestOptions, tokenOverride?: string): Promise<PullRequest> {
     try {
       const response = await this.apiRequest(`POST /repos/${this.owner}/${this.repo}/pulls`, {
         title: options.title,
@@ -394,23 +788,23 @@ export class GitHubProvider implements GitProvider {
         head: options.head,
         base: options.base,
         draft: options.draft || false,
-      })
+      }, tokenOverride)
 
       // Add reviewers if specified
       if (options.reviewers && options.reviewers.length > 0) {
         try {
-          console.log(`🔍 Adding reviewers to PR #${response.number}: ${options.reviewers.join(', ')}`)
+          this.logger.info(`🔍 Adding reviewers to PR #${response.number}: ${options.reviewers.join(', ')}`)
           await this.apiRequest(`POST /repos/${this.owner}/${this.repo}/pulls/${response.number}/requested_reviewers`, {
             reviewers: options.reviewers,
             team_reviewers: options.teamReviewers || [],
           })
-          console.log(`✅ Successfully added reviewers: ${options.reviewers.join(', ')}`)
+          this.logger.info(`✅ Successfully added reviewers: ${options.reviewers.join(', ')}`)
         }
         catch (reviewerError) {
-          console.error(`❌ Failed to add reviewers: ${reviewerError}`)
-          console.error(`   Reviewers: ${options.reviewers.join(', ')}`)
-          console.error(`   Repository: ${this.owner}/${this.repo}`)
-          console.error(`   PR: #${response.number}`)
+          this.logger.error(`❌ Failed to add reviewers: ${reviewerError}`)
+          this.logger.error(`   Reviewers: ${options.reviewers.join(', ')}`)
+          this.logger.error(`   Repository: ${this.owner}/${this.repo}`)
+          this.logger.error(`   PR: #${response.number}`)
         }
       }
 
@@ -422,7 +816,7 @@ export class GitHubProvider implements GitProvider {
           })
         }
         catch (assigneeError) {
-          console.warn(`⚠️ Failed to add assignees: ${assigneeError}`)
+          this.logger.warn(`⚠️ Failed to add assignees: ${assigneeError}`)
         }
       }
 
@@ -434,7 +828,7 @@ export class GitHubProvider implements GitProvider {
           })
         }
         catch (labelError) {
-          console.warn(`⚠️ Failed to add labels: ${labelError}`)
+          this.logger.warn(`⚠️ Failed to add labels: ${labelError}`)
           // Try to add labels one by one to handle missing labels gracefully
           for (const label of options.labels) {
             try {
@@ -443,13 +837,13 @@ export class GitHubProvider implements GitProvider {
               })
             }
             catch (singleLabelError) {
-              console.warn(`⚠️ Failed to add label '${label}': ${singleLabelError}`)
+              this.logger.warn(`⚠️ Failed to add label '${label}': ${singleLabelError}`)
             }
           }
         }
       }
 
-      console.log(`✅ Created PR #${response.number}: ${options.title}`)
+      this.logger.info(`✅ Created PR #${response.number}: ${options.title}`)
 
       return {
         number: response.number,
@@ -469,22 +863,47 @@ export class GitHubProvider implements GitProvider {
       }
     }
     catch (error) {
-      console.error(`❌ Failed to create PR with API: ${options.title}`, error)
+      this.logger.error(`❌ Failed to create PR with API: ${options.title}: ${formatError(error)}`)
       throw error
     }
   }
 
   /**
+   * Get the effective token for a given operation.
+   * Uses the workflow token (PAT) for operations that need elevated permissions,
+   * and the primary token (GITHUB_TOKEN) for everything else.
+   */
+  /** The web origin git talks to: github.com, or a GitHub Enterprise host. */
+  private gitServerUrl(): string {
+    return this.apiUrl === 'https://api.github.com'
+      ? 'https://github.com'
+      : this.apiUrl.replace(/\/api\/v3$/, '')
+  }
+
+  private getEffectiveToken(requireWorkflowPermissions = false): string {
+    if (requireWorkflowPermissions && this.workflowToken)
+      return this.workflowToken
+    return this.token
+  }
+
+  /**
    * Run a command and return its output
    */
-  async runCommand(command: string, args: string[]): Promise<string> {
+  async runCommand(command: string, args: string[], tokenOverride?: string): Promise<string> {
+    const effectiveToken = tokenOverride || this.token
+    // git authenticates with the header actions/checkout persisted, not with
+    // GITHUB_TOKEN in its environment, so an override only reaches git as its
+    // own extraheader. Without this, every "push with the workflow token" went
+    // out as GITHUB_TOKEN.
+    if (command === 'git' && tokenOverride)
+      args = [...gitAuthConfigArgs(this.gitServerUrl(), tokenOverride), ...args]
     return new Promise((resolve, reject) => {
       const child = spawn(command, args, {
         stdio: 'pipe',
         env: {
           ...process.env,
-          GITHUB_TOKEN: this.token,
-          GH_TOKEN: this.token,
+          GITHUB_TOKEN: effectiveToken,
+          GH_TOKEN: effectiveToken,
         },
       })
 
@@ -504,7 +923,9 @@ export class GitHubProvider implements GitProvider {
           resolve(stdout)
         }
         else {
-          reject(new Error(`Command failed with code ${code}: ${stderr}`))
+          // Scrub any token-shaped strings (including the effective token itself)
+          // before surfacing stderr — stderr is logged and can end up in CI output.
+          reject(new Error(`Command failed with code ${code}: ${sanitizeStderr(stderr, effectiveToken)}`))
         }
       })
 
@@ -514,35 +935,87 @@ export class GitHubProvider implements GitProvider {
     })
   }
 
-  async getPullRequests(state: 'open' | 'closed' | 'all' = 'open'): Promise<PullRequest[]> {
-    try {
-      const response = await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/pulls?state=${state}`)
+  async isBranchBehind(branch: string, base: string): Promise<boolean> {
+    const comparison = await this.apiRequestWithRetry(
+      `GET /repos/${this.owner}/${this.repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(branch)}`,
+    ) as { behind_by?: number }
+    return (comparison.behind_by ?? 0) > 0
+  }
 
-      return response.map((pr: any) => ({
+  async getPullRequestFiles(number: number): Promise<string[]> {
+    const paths: string[] = []
+    // 100 per page, and GitHub caps the list at 3000 files.
+    for (let page = 1; page <= 30; page++) {
+      const files = await this.apiRequestWithRetry(`GET /repos/${this.owner}/${this.repo}/pulls/${number}/files?per_page=100&page=${page}`) as Array<{ filename: string }>
+      paths.push(...files.map(file => file.filename))
+      if (files.length < 100)
+        break
+    }
+    return paths
+  }
+
+  async getPullRequests(state: 'open' | 'closed' | 'all' = 'open'): Promise<PullRequest[]> {
+    // Check cache first
+    const cacheKey = `${state}`
+    const cached = this.cache.pullRequests.get(cacheKey)
+    if (cached && this.isCacheValid(cached.timestamp)) {
+      this.logger.info(`📦 Using cached PRs (state: ${state}, ${cached.data.length} PRs)`)
+      return cached.data
+    }
+
+    try {
+      // GitHub caps per_page at 100. Repos with many buddy PRs would
+      // silently truncate at the first page, causing duplicate-PR creation
+      // because lookup misses existing entries. Walk pages until we get a
+      // short one, or cap after 20 pages (2000 PRs) as a sanity stop.
+      const perPage = 100
+      const maxPages = 20
+      const all: GitHubPullResponse[] = []
+      for (let page = 1; page <= maxPages; page++) {
+        const response = await this.apiRequestWithRetry(
+          `GET /repos/${this.owner}/${this.repo}/pulls?state=${state}&per_page=${perPage}&page=${page}`,
+        ) as GitHubPullResponse[]
+        if (!Array.isArray(response) || response.length === 0)
+          break
+        all.push(...response)
+        if (response.length < perPage)
+          break
+      }
+
+      const prs: PullRequest[] = all.map(pr => ({
         number: pr.number,
         title: pr.title,
-        body: pr.body || '',
+        body: pr.body ?? '',
         head: pr.head.ref,
         base: pr.base.ref,
-        state: pr.state,
+        state: pr.state as PullRequest['state'],
         url: pr.html_url,
         createdAt: new Date(pr.created_at),
         updatedAt: new Date(pr.updated_at),
         mergedAt: pr.merged_at ? new Date(pr.merged_at) : undefined,
         author: pr.user.login,
-        reviewers: pr.requested_reviewers?.map((r: any) => r.login) || [],
-        assignees: pr.assignees?.map((a: any) => a.login) || [],
-        labels: pr.labels?.map((l: any) => l.name) || [],
+        reviewers: pr.requested_reviewers?.map(r => r.login) ?? [],
+        assignees: pr.assignees?.map(a => a.login) ?? [],
+        labels: pr.labels?.map(l => l.name) ?? [],
         draft: pr.draft,
       }))
+
+      // Cache the result
+      this.cache.pullRequests.set(cacheKey, { data: prs, timestamp: Date.now() })
+      this.logger.info(`✅ Fetched and cached ${prs.length} PRs (state: ${state})`)
+
+      return prs
     }
     catch (error) {
-      console.error(`❌ Failed to get PRs:`, error)
+      this.logger.error(`❌ Failed to get PRs: ${formatError(error)}`)
       throw error
     }
   }
 
   async updatePullRequest(prNumber: number, options: Partial<PullRequestOptions>): Promise<PullRequest> {
+    // Invalidate PR cache since we're modifying data
+    this.cache.pullRequests.clear()
+
     try {
       const updateData: any = {}
       if (options.title)
@@ -562,10 +1035,10 @@ export class GitHubProvider implements GitProvider {
           await this.apiRequest(`PUT /repos/${this.owner}/${this.repo}/issues/${prNumber}/labels`, {
             labels: options.labels,
           })
-          console.log(`✅ Updated labels for PR #${prNumber}: ${options.labels.join(', ')}`)
+          this.logger.info(`✅ Updated labels for PR #${prNumber}: ${options.labels.join(', ')}`)
         }
         catch (labelError) {
-          console.warn(`⚠️ Failed to update labels for PR #${prNumber}: ${labelError}`)
+          this.logger.warn(`⚠️ Failed to update labels for PR #${prNumber}: ${labelError}`)
           // Try to add labels one by one to handle missing labels gracefully
           for (const label of options.labels) {
             try {
@@ -574,7 +1047,7 @@ export class GitHubProvider implements GitProvider {
               })
             }
             catch (singleLabelError) {
-              console.warn(`⚠️ Failed to add label '${label}' to PR #${prNumber}: ${singleLabelError}`)
+              this.logger.warn(`⚠️ Failed to add label '${label}' to PR #${prNumber}: ${singleLabelError}`)
             }
           }
         }
@@ -583,17 +1056,17 @@ export class GitHubProvider implements GitProvider {
       // Update reviewers if specified
       if (options.reviewers && options.reviewers.length > 0) {
         try {
-          console.log(`🔍 Adding reviewers to existing PR #${prNumber}: ${options.reviewers.join(', ')}`)
+          this.logger.info(`🔍 Adding reviewers to existing PR #${prNumber}: ${options.reviewers.join(', ')}`)
           await this.apiRequest(`POST /repos/${this.owner}/${this.repo}/pulls/${prNumber}/requested_reviewers`, {
             reviewers: options.reviewers,
             team_reviewers: options.teamReviewers || [],
           })
-          console.log(`✅ Updated reviewers for PR #${prNumber}: ${options.reviewers.join(', ')}`)
+          this.logger.info(`✅ Updated reviewers for PR #${prNumber}: ${options.reviewers.join(', ')}`)
         }
         catch (reviewerError) {
-          console.error(`❌ Failed to update reviewers for PR #${prNumber}: ${reviewerError}`)
-          console.error(`   Reviewers: ${options.reviewers.join(', ')}`)
-          console.error(`   Repository: ${this.owner}/${this.repo}`)
+          this.logger.error(`❌ Failed to update reviewers for PR #${prNumber}: ${reviewerError}`)
+          this.logger.error(`   Reviewers: ${options.reviewers.join(', ')}`)
+          this.logger.error(`   Repository: ${this.owner}/${this.repo}`)
         }
       }
 
@@ -602,14 +1075,14 @@ export class GitHubProvider implements GitProvider {
         try {
           // Use GitHub CLI for assignees (more reliable with permissions)
           await this.runCommand('gh', ['issue', 'edit', prNumber.toString(), '--add-assignee', options.assignees.join(',')])
-          console.log(`✅ Updated assignees for PR #${prNumber}: ${options.assignees.join(', ')}`)
+          this.logger.info(`✅ Updated assignees for PR #${prNumber}: ${options.assignees.join(', ')}`)
         }
         catch (assigneeError) {
-          console.warn(`⚠️ Failed to update assignees for PR #${prNumber}: ${assigneeError}`)
+          this.logger.warn(`⚠️ Failed to update assignees for PR #${prNumber}: ${assigneeError}`)
         }
       }
 
-      console.log(`✅ Updated PR #${prNumber}`)
+      this.logger.info(`✅ Updated PR #${prNumber}`)
 
       return {
         number: response.number,
@@ -629,33 +1102,41 @@ export class GitHubProvider implements GitProvider {
       }
     }
     catch (error) {
-      console.error(`❌ Failed to update PR #${prNumber}:`, error)
+      this.logger.error(`❌ Failed to update PR #${prNumber}: ${formatError(error)}`)
       throw error
     }
   }
 
   async closePullRequest(prNumber: number): Promise<void> {
-    try {
-      // Get PR details to know the branch name for cleanup
-      const prDetails = await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/pulls/${prNumber}`)
-      const branchName = prDetails.head.ref
+    // Invalidate PR cache since we're modifying data
+    this.cache.pullRequests.clear()
 
+    try {
       await this.apiRequest(`PATCH /repos/${this.owner}/${this.repo}/pulls/${prNumber}`, {
         state: 'closed',
       })
-      console.log(`✅ Closed PR #${prNumber}`)
-
-      // Clean up the branch after closing
-      try {
-        await this.deleteBranch(branchName)
-        console.log(`🧹 Cleaned up branch ${branchName} after close`)
-      }
-      catch (cleanupError) {
-        console.warn(`⚠️ Failed to clean up branch ${branchName}:`, cleanupError)
-      }
+      this.logger.info(`✅ Closed PR #${prNumber}`)
+      // NOTE: Branch cleanup is the caller's responsibility.
+      // Automatically deleting the branch here prevents reopening PRs later.
     }
     catch (error) {
-      console.error(`❌ Failed to close PR #${prNumber}:`, error)
+      this.logger.error(`❌ Failed to close PR #${prNumber}: ${formatError(error)}`)
+      throw error
+    }
+  }
+
+  async reopenPullRequest(prNumber: number): Promise<void> {
+    // Invalidate PR cache since we're modifying data
+    this.cache.pullRequests.clear()
+
+    try {
+      await this.apiRequest(`PATCH /repos/${this.owner}/${this.repo}/pulls/${prNumber}`, {
+        state: 'open',
+      })
+      this.logger.info(`✅ Reopened PR #${prNumber}`)
+    }
+    catch (error) {
+      this.logger.error(`❌ Failed to reopen PR #${prNumber}: ${formatError(error)}`)
       throw error
     }
   }
@@ -665,10 +1146,10 @@ export class GitHubProvider implements GitProvider {
       await this.apiRequest(`POST /repos/${this.owner}/${this.repo}/issues/${prNumber}/comments`, {
         body: comment,
       })
-      console.log(`💬 Added comment to PR #${prNumber}`)
+      this.logger.info(`💬 Added comment to PR #${prNumber}`)
     }
     catch (error) {
-      console.error(`❌ Failed to add comment to PR #${prNumber}:`, error)
+      this.logger.error(`❌ Failed to add comment to PR #${prNumber}: ${formatError(error)}`)
       throw error
     }
   }
@@ -685,21 +1166,568 @@ export class GitHubProvider implements GitProvider {
         merge_method: mergeMethod,
       })
 
-      console.log(`✅ Merged PR #${prNumber} using ${strategy}`)
+      this.logger.info(`✅ Merged PR #${prNumber} using ${strategy}`)
 
       // Clean up the branch after successful merge
       try {
         await this.deleteBranch(branchName)
-        console.log(`🧹 Cleaned up branch ${branchName} after merge`)
+        this.logger.info(`🧹 Cleaned up branch ${branchName} after merge`)
       }
       catch (cleanupError) {
-        console.warn(`⚠️ Failed to clean up branch ${branchName}:`, cleanupError)
+        this.logger.warn(`⚠️ Failed to clean up branch ${branchName}:`, cleanupError)
       }
     }
     catch (error) {
-      console.error(`❌ Failed to merge PR #${prNumber}:`, error)
+      this.logger.error(`❌ Failed to merge PR #${prNumber}: ${formatError(error)}`)
       throw error
     }
+  }
+
+  /**
+   * The head commit of a pull request.
+   *
+   * Exposed as its own method rather than letting callers reach into the
+   * provider, because the review state marker keys on this SHA and a wrong
+   * one silently re-reviews or silently skips.
+   *
+   * @param prNumber - Pull request to read
+   * @returns The head SHA, or an empty string when it cannot be read
+   */
+  async getPullRequestHeadSha(prNumber: number): Promise<string> {
+    try {
+      const response = await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/pulls/${prNumber}`)
+      return response?.head?.sha ?? ''
+    }
+    catch (error) {
+      this.logger.debug(`Could not read head SHA for PR #${prNumber}: ${formatError(error)}`)
+      return ''
+    }
+  }
+
+  /**
+   * Whether a user may push to this repository.
+   *
+   * Public repositories accept comments from anyone, so this is what separates
+   * a maintainer's command from a stranger's.
+   *
+   * @param username - Login to check
+   * @returns `true` for write, maintain or admin access
+   */
+  async hasWriteAccess(username: string): Promise<boolean> {
+    try {
+      const response = await this.apiRequest(
+        `GET /repos/${this.owner}/${this.repo}/collaborators/${encodeURIComponent(username)}/permission`,
+      )
+
+      return ['write', 'maintain', 'admin'].includes(response?.permission)
+    }
+    catch (error) {
+      // A 404 here means "not a collaborator", which is a definitive no.
+      if (error instanceof GitHubApiError && error.isNotFound)
+        return false
+
+      // Anything else is unknown, and unknown must not grant access.
+      this.logger.warn(`⚠️ Could not resolve permissions for @${username}: ${formatError(error)}`)
+      return false
+    }
+  }
+
+  /**
+   * React to a comment, acknowledging that a command was seen.
+   *
+   * Failures are swallowed: an acknowledgement that did not appear is a worse
+   * outcome than a command that did not run, but only slightly, and it must
+   * never be the reason the command itself fails.
+   *
+   * @param commentId - Comment to react to
+   * @param reaction - Reaction content
+   */
+  async reactToComment(commentId: number, reaction: 'eyes' | '+1' | '-1' | 'rocket' | 'confused'): Promise<void> {
+    try {
+      await this.apiRequest(
+        `POST /repos/${this.owner}/${this.repo}/issues/comments/${commentId}/reactions`,
+        { content: reaction },
+      )
+    }
+    catch (error) {
+      this.logger.debug(`Could not react to comment ${commentId}: ${formatError(error)}`)
+    }
+  }
+
+  /**
+   * Fetch the logs of a failed workflow run.
+   *
+   * Returns the raw log archive as text. The classifier works on log text, so
+   * no per-job parsing is needed here — the whole run's output is what a
+   * failure diagnosis wants anyway.
+   *
+   * @param runId - Workflow run to read
+   * @returns Log text, or `null` when the logs are unavailable
+   */
+  async getWorkflowRunLogs(runId: number): Promise<string | null> {
+    try {
+      const response = await fetchWithTimeout(
+        `${this.apiUrl}/repos/${this.owner}/${this.repo}/actions/runs/${runId}/logs`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.token}`,
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'buddy',
+          },
+        },
+      )
+
+      if (!response.ok) {
+        this.logger.debug(`Could not fetch logs for run ${runId}: ${response.status}`)
+        return null
+      }
+
+      // The endpoint returns a zip; the readable text inside is enough for
+      // classification, so it is extracted loosely rather than unzipped.
+      const buffer = Buffer.from(await response.arrayBuffer())
+      return buffer.toString('utf-8').replace(/[^\t\n\r\x20-\x7E]+/g, ' ')
+    }
+    catch (error) {
+      this.logger.debug(`Could not fetch logs for run ${runId}: ${formatError(error)}`)
+      return null
+    }
+  }
+
+  /**
+   * List recent workflow runs for a branch, most recent first.
+   *
+   * Resolves `[]` rather than throwing when the history cannot be read. The
+   * caller asking is deciding whether a failure is pre-existing, and an
+   * unreadable history is no evidence either way — treating it as evidence
+   * would either mask a real regression or refuse a repair that was wanted.
+   *
+   * @param branch - Branch to list runs for
+   * @param options - State filter and how many runs to return
+   * @returns Runs, most recent first; `[]` when unreadable
+   * @example
+   * ```ts
+   * const runs = await provider.listWorkflowRuns('main', { status: 'completed', limit: 10 })
+   * ```
+   */
+  async listWorkflowRuns(branch: string, options: ListWorkflowRunsOptions = {}): Promise<WorkflowRun[]> {
+    const query = new URLSearchParams({ branch, per_page: String(options.limit ?? 20) })
+    if (options.status)
+      query.set('status', options.status)
+
+    try {
+      const data = await this.apiRequest(
+        `GET /repos/${this.owner}/${this.repo}/actions/runs?${query.toString()}`,
+      )
+
+      const runs = (data?.workflow_runs ?? []) as Array<Record<string, unknown>>
+      return runs.map(run => ({
+        id: Number(run.id),
+        name: String(run.name ?? ''),
+        headSha: String(run.head_sha ?? ''),
+        headBranch: String(run.head_branch ?? branch),
+        status: runStatus(run.status),
+        conclusion: runConclusion(run.conclusion),
+        createdAt: new Date(String(run.created_at ?? new Date().toISOString())),
+      }))
+    }
+    catch (error) {
+      this.logger.debug(`Could not list workflow runs for ${branch}: ${formatError(error)}`)
+      return []
+    }
+  }
+
+  /**
+   * Re-run a workflow run.
+   *
+   * GitHub re-runs against the run's *original* commit, so this clears a
+   * failure that a retry can clear on its own — a flake. It is not a way to
+   * re-check a commit that has since been repaired: that commit needs a run of
+   * its own, and this endpoint will not produce one.
+   *
+   * Requires `actions: write`. A refusal is reported rather than thrown,
+   * because the caller is a repair run and losing it over a permission it only
+   * wanted opportunistically would be worse than not retrying.
+   *
+   * @param runId - Run to re-run
+   * @param failedJobsOnly - Re-run only the jobs that failed (default true)
+   * @returns Whether GitHub accepted the request
+   */
+  async rerunWorkflowRun(runId: number, failedJobsOnly = true): Promise<boolean> {
+    // Deliberately not `apiRequest`: this endpoint answers 201 with an empty
+    // body, which that helper would try to parse as JSON.
+    const endpoint = failedJobsOnly ? 'rerun-failed-jobs' : 'rerun'
+
+    try {
+      const response = await fetchWithTimeout(
+        `${this.apiUrl}/repos/${this.owner}/${this.repo}/actions/runs/${runId}/${endpoint}`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.token}`,
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'buddy',
+          },
+        },
+      )
+
+      if (!response.ok) {
+        this.logger.warn(`Could not re-run workflow run ${runId}: ${response.status} ${response.statusText}`)
+        return false
+      }
+
+      return true
+    }
+    catch (error) {
+      this.logger.warn(`Could not re-run workflow run ${runId}: ${formatError(error)}`)
+      return false
+    }
+  }
+
+  /**
+   * Create or update a check run on a commit.
+   *
+   * Reported as a check run rather than a comment so branch protection can
+   * require it — a gate that cannot block is only advice.
+   *
+   * @param name - Check name, as it appears in the checks list
+   * @param headSha - Commit to attach the result to
+   * @param result - Conclusion and the text shown in the checks tab
+   */
+  async createCheckRun(
+    name: string,
+    headSha: string,
+    result: { conclusion: 'success' | 'failure' | 'neutral', title: string, summary: string },
+  ): Promise<void> {
+    try {
+      await this.apiRequest(`POST /repos/${this.owner}/${this.repo}/check-runs`, {
+        name,
+        head_sha: headSha,
+        status: 'completed',
+        conclusion: result.conclusion,
+        completed_at: new Date().toISOString(),
+        output: { title: result.title, summary: result.summary },
+      })
+
+      this.logger.info(`✅ Reported check run ${name}: ${result.conclusion}`)
+    }
+    catch (error) {
+      // Check runs need `checks: write`, which a default GITHUB_TOKEN may
+      // lack; a missing gate result must not fail the run that produced it.
+      this.logger.warn(`⚠️ Could not report check run ${name}: ${formatError(error)}`)
+    }
+  }
+
+  /**
+   * Read a repository file at a specific ref.
+   *
+   * The ref is explicit rather than defaulting to the branch under review:
+   * callers that inline file contents into a prompt must read from the base
+   * branch, and a defaulted ref makes that easy to get wrong silently.
+   *
+   * @param path - Repository-relative path
+   * @param ref - Branch, tag or SHA to read from
+   * @returns File contents, or `null` when the file does not exist there
+   */
+  async getFileContent(path: string, ref: string): Promise<string | null> {
+    try {
+      const response = await this.apiRequest(
+        `GET /repos/${this.owner}/${this.repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(ref)}`,
+      )
+
+      if (!response?.content)
+        return null
+
+      return Buffer.from(response.content, response.encoding === 'base64' ? 'base64' : 'utf-8').toString('utf-8')
+    }
+    catch (error) {
+      if (error instanceof GitHubApiError && error.isNotFound)
+        return null
+      throw error
+    }
+  }
+
+  /**
+   * Fetch a pull request's unified diff.
+   *
+   * Uses the diff media type rather than assembling per-file patches, so the
+   * result is the same shape `git diff` produces and one parser serves both
+   * local and pull request review.
+   *
+   * @param prNumber - Pull request to read
+   * @returns Unified diff text
+   */
+  async getPullRequestDiff(prNumber: number): Promise<string> {
+    const response = await fetchWithTimeout(
+      `${this.apiUrl}/repos/${this.owner}/${this.repo}/pulls/${prNumber}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${this.token}`,
+          'Accept': 'application/vnd.github.v3.diff',
+          'User-Agent': 'buddy',
+        },
+      },
+    )
+
+    if (!response.ok) {
+      throw new GitHubApiError(
+        `Failed to fetch diff for PR #${prNumber}: ${response.status} ${response.statusText}`,
+        response.status,
+        'GET',
+        `${this.apiUrl}/repos/${this.owner}/${this.repo}/pulls/${prNumber}`,
+        `${this.owner}/${this.repo}`,
+      )
+    }
+
+    return await response.text()
+  }
+
+  /**
+   * Post a review with inline comments.
+   *
+   * Comments whose anchor GitHub rejects are retried once without them, so a
+   * single bad line number costs its own comment rather than the whole review.
+   *
+   * @param prNumber - Pull request to review
+   * @param review - Summary body, inline comments and the review event
+   * @returns Whether inline comments survived the post
+   */
+  async createReview(
+    prNumber: number,
+    review: {
+      body: string
+      event: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE'
+      comments?: Array<{ path: string, line: number, side: 'RIGHT' | 'LEFT', body: string }>
+    },
+  ): Promise<{ posted: boolean, inlineComments: number }> {
+    const endpoint = `POST /repos/${this.owner}/${this.repo}/pulls/${prNumber}/reviews`
+
+    try {
+      await this.apiRequest(endpoint, {
+        body: review.body,
+        event: review.event,
+        ...(review.comments?.length ? { comments: review.comments } : {}),
+      })
+
+      this.logger.success(`✅ Posted review on PR #${prNumber} (${review.comments?.length ?? 0} inline comment(s))`)
+      return { posted: true, inlineComments: review.comments?.length ?? 0 }
+    }
+    catch (error) {
+      if (!review.comments?.length) {
+        this.logger.error(`❌ Failed to post review on PR #${prNumber}: ${formatError(error)}`)
+        throw error
+      }
+
+      this.logger.warn(
+        `⚠️ Review with inline comments was rejected (${formatError(error)}); posting the summary alone`,
+      )
+
+      await this.apiRequest(endpoint, { body: review.body, event: review.event })
+      return { posted: true, inlineComments: 0 }
+    }
+  }
+
+  /**
+   * Ask GitHub to merge a pull request itself once its required checks pass.
+   *
+   * This is the preferred auto-merge path: GitHub owns the waiting, so a
+   * workflow run doesn't have to poll. It only works on repositories that
+   * have auto-merge enabled and at least one required check — without those,
+   * the mutation fails and the caller should fall back to merging directly
+   * once checks are observed green.
+   *
+   * @param prNumber - Pull request to queue
+   * @param strategy - Merge method to use
+   * @returns `true` when GitHub accepted the request, `false` when the
+   * repository cannot queue it (branch protection or auto-merge not set up)
+   * @throws {GitHubApiError} When the API call itself fails
+   */
+  async enableAutoMerge(prNumber: number, strategy: 'merge' | 'squash' | 'rebase' = 'squash'): Promise<boolean> {
+    const pr = await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/pulls/${prNumber}`)
+    const mutation = `mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+      enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: $mergeMethod }) {
+        pullRequest { number }
+      }
+    }`
+
+    const response = await this.graphqlRequest(mutation, {
+      pullRequestId: pr.node_id,
+      mergeMethod: strategy.toUpperCase(),
+    })
+
+    if (response.errors?.length) {
+      // "Pull request is in clean status" means there is nothing to wait for,
+      // so GitHub refuses to queue it. That is a fallback signal, not a bug.
+      const message = response.errors.map((error: { message: string }) => error.message).join('; ')
+      this.logger.info(`ℹ️ GitHub could not queue auto-merge for PR #${prNumber}: ${message}`)
+      return false
+    }
+
+    this.logger.success(`✅ Auto-merge queued for PR #${prNumber} (${strategy})`)
+    return true
+  }
+
+  /**
+   * List the review threads on a pull request, oldest first.
+   *
+   * REST exposes review comments but not the threads they belong to, nor
+   * whether one is resolved — both of which are GraphQL-only. Resolves `[]`
+   * rather than throwing, because a caller tidying up should treat an
+   * unreadable conversation as nothing to tidy.
+   *
+   * @param prNumber - Pull request to read
+   * @returns Threads, oldest first; `[]` when unreadable
+   */
+  async listReviewThreads(prNumber: number): Promise<ReviewThread[]> {
+    const query = `query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100) {
+            nodes {
+              id
+              isResolved
+              path
+              comments(first: 10) { nodes { author { login } } }
+            }
+          }
+        }
+      }
+    }`
+
+    try {
+      const response = await this.graphqlRequest(query, {
+        owner: this.owner,
+        repo: this.repo,
+        number: prNumber,
+      })
+
+      if (response.errors?.length) {
+        this.logger.debug(`Could not read review threads on #${prNumber}: ${
+          response.errors.map((error: { message: string }) => error.message).join('; ')
+        }`)
+        return []
+      }
+
+      const nodes = response.data?.repository?.pullRequest?.reviewThreads?.nodes ?? []
+      return nodes.filter(Boolean).map((node: Record<string, any>) => ({
+        id: String(node.id),
+        isResolved: Boolean(node.isResolved),
+        ...(node.path ? { path: String(node.path) } : {}),
+        authorLogins: (node.comments?.nodes ?? [])
+          .map((comment: { author?: { login?: string } }) => comment?.author?.login)
+          .filter((login: unknown): login is string => typeof login === 'string'),
+      }))
+    }
+    catch (error) {
+      this.logger.debug(`Could not read review threads on #${prNumber}: ${formatError(error)}`)
+      return []
+    }
+  }
+
+  /**
+   * Mark a review thread resolved.
+   *
+   * @param _prNumber - Unused; GitHub thread ids are globally addressable
+   * @param threadId - Thread to resolve
+   * @returns Whether GitHub accepted it
+   */
+  async resolveReviewThread(_prNumber: number, threadId: string): Promise<boolean> {
+    const mutation = `mutation($threadId: ID!) {
+      resolveReviewThread(input: { threadId: $threadId }) {
+        thread { isResolved }
+      }
+    }`
+
+    try {
+      const response = await this.graphqlRequest(mutation, { threadId })
+
+      if (response.errors?.length) {
+        this.logger.warn(`Could not resolve review thread: ${
+          response.errors.map((error: { message: string }) => error.message).join('; ')
+        }`)
+        return false
+      }
+
+      return Boolean(response.data?.resolveReviewThread?.thread?.isResolved)
+    }
+    catch (error) {
+      this.logger.warn(`Could not resolve review thread: ${formatError(error)}`)
+      return false
+    }
+  }
+
+  /**
+   * Aggregate state of the checks and commit statuses on a PR's head commit.
+   *
+   * @param prNumber - Pull request to inspect
+   * @returns `'success'` when everything passed, `'failure'` when anything
+   * failed, `'pending'` while work is outstanding, and `'none'` when the
+   * repository reports no checks at all
+   */
+  async getPullRequestChecksState(prNumber: number): Promise<'success' | 'failure' | 'pending' | 'none'> {
+    try {
+      const pr = await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/pulls/${prNumber}`)
+      const ref = pr.head.sha
+
+      const [status, checks] = await Promise.all([
+        this.apiRequest(`GET /repos/${this.owner}/${this.repo}/commits/${ref}/status`),
+        this.apiRequest(`GET /repos/${this.owner}/${this.repo}/commits/${ref}/check-runs?per_page=100`),
+      ])
+
+      const runs: Array<{ status: string, conclusion: string | null }> = checks?.check_runs ?? []
+      const hasLegacyStatuses = (status?.statuses?.length ?? 0) > 0
+
+      if (runs.length === 0 && !hasLegacyStatuses)
+        return 'none'
+
+      const failed = runs.some(run =>
+        run.conclusion !== null
+        && ['failure', 'cancelled', 'timed_out', 'action_required'].includes(run.conclusion),
+      )
+      if (failed || status?.state === 'failure' || status?.state === 'error')
+        return 'failure'
+
+      const running = runs.some(run => run.status !== 'completed')
+      if (running || status?.state === 'pending')
+        return 'pending'
+
+      return 'success'
+    }
+    catch (error) {
+      // An unreadable check state must not be mistaken for a green one.
+      this.logger.warn(`⚠️ Could not read check state for PR #${prNumber}: ${formatError(error)}`)
+      return 'pending'
+    }
+  }
+
+  /**
+   * Issue a GraphQL request against the configured GitHub API.
+   *
+   * Errors are returned in the payload rather than thrown, because GraphQL
+   * reports business-level refusals (such as a PR not being auto-mergeable)
+   * with HTTP 200 and an `errors` array.
+   */
+  private async graphqlRequest(query: string, variables: Record<string, unknown>): Promise<any> {
+    const response = await fetchWithTimeout(`${this.apiUrl}/graphql`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.token}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'buddy',
+      },
+      body: JSON.stringify({ query, variables }),
+    })
+
+    if (!response.ok) {
+      throw new GitHubApiError(
+        `GraphQL request failed: ${response.status} ${response.statusText}`,
+        response.status,
+        'POST',
+        `${this.apiUrl}/graphql`,
+        `${this.owner}/${this.repo}`,
+      )
+    }
+
+    return await response.json()
   }
 
   /**
@@ -709,29 +1737,39 @@ export class GitHubProvider implements GitProvider {
     try {
       // Use pure git to delete the remote branch (no API calls!)
       await this.runCommand('git', ['push', 'origin', '--delete', branchName])
-      console.log(`✅ Deleted branch ${branchName} via git`)
+      this.logger.info(`✅ Deleted branch ${branchName} via git`)
     }
     catch (error) {
-      // If git push fails, it might be because the branch doesn't exist remotely
-      // or we don't have push permissions. Try to delete locally and ignore errors.
+      // The local tracking branch is tidied either way; it is not what the
+      // caller asked about and its absence is not an error.
       try {
-        // Also delete local tracking branch if it exists
         await this.runCommand('git', ['branch', '-D', branchName])
-        console.log(`✅ Deleted local branch ${branchName}`)
       }
       catch {
         // Ignore local deletion errors - branch might not exist locally
       }
 
-      console.warn(`⚠️ Failed to delete remote branch ${branchName}:`, error)
-      // Don't throw - branch deletion failures are not critical
+      // A branch that is already gone is the outcome the caller wanted, so
+      // that one failure is a success. Every other failure — no push
+      // permission, network, protected branch — is reported by throwing, the
+      // way the GitLab and Bitbucket providers already do. This used to
+      // swallow all of them, which made `cleanupStaleBranches`'s `failed`
+      // bucket unreachable: every branch was reported deleted whether the
+      // push succeeded or not.
+      if (/remote ref does not exist|unable to delete '[^']*': remote ref/i.test(formatError(error))) {
+        this.logger.info(`ℹ️ Branch ${branchName} was already gone`)
+        return
+      }
+
+      this.logger.warn(`⚠️ Failed to delete remote branch ${branchName}: ${formatError(error)}`)
+      throw error
     }
   }
 
   /**
-   * Get all buddy-bot branches from the repository using local git commands
+   * Get all buddy branches from the repository using local git commands
    */
-  async getBuddyBotBranches(): Promise<Array<{ name: string, sha: string, lastCommitDate: Date }>> {
+  async getBuddyBranches(): Promise<Array<{ name: string, sha: string, lastCommitDate: Date }>> {
     try {
       // Use local git to get all remote branches
       const remoteBranchesOutput = await this.runCommand('git', ['branch', '-r', '--format=%(refname:short) %(objectname) %(committerdate:iso8601)'])
@@ -747,15 +1785,15 @@ export class GitHubProvider implements GitProvider {
         if (parts.length < 3)
           continue
 
-        const fullBranchName = parts[0] // e.g., "origin/buddy-bot/update-deps"
+        const fullBranchName = parts[0] // e.g., "origin/buddy/update-deps"
         const sha = parts[1]
         const dateStr = parts.slice(2).join(' ') // Join back in case date has spaces
 
         // Extract just the branch name without remote prefix
         const branchName = fullBranchName.replace(/^origin\//, '')
 
-        // Only include buddy-bot branches
-        if (!branchName.startsWith('buddy-bot/'))
+        // Only include buddy branches
+        if (!isBuddyBranch(branchName))
           continue
 
         try {
@@ -767,7 +1805,7 @@ export class GitHubProvider implements GitProvider {
           })
         }
         catch {
-          console.warn(`⚠️ Failed to parse date for branch ${branchName}: ${dateStr}`)
+          this.logger.warn(`⚠️ Failed to parse date for branch ${branchName}: ${dateStr}`)
           branches.push({
             name: branchName,
             sha,
@@ -776,21 +1814,21 @@ export class GitHubProvider implements GitProvider {
         }
       }
 
-      console.log(`🔍 Found ${branches.length} buddy-bot branches using local git`)
+      this.logger.info(`🔍 Found ${branches.length} buddy branches using local git`)
       return branches
     }
     catch (error) {
-      console.warn('⚠️ Failed to fetch buddy-bot branches via git, falling back to API:', error)
+      this.logger.warn('⚠️ Failed to fetch buddy branches via git, falling back to API:', error)
 
       // Fallback to API method if git fails
-      return this.getBuddyBotBranchesViaAPI()
+      return this.getBuddyBranchesViaAPI()
     }
   }
 
   /**
-   * Fallback method to get buddy-bot branches via API (original implementation)
+   * Fallback method to get buddy branches via API (original implementation)
    */
-  private async getBuddyBotBranchesViaAPI(): Promise<Array<{ name: string, sha: string, lastCommitDate: Date }>> {
+  private async getBuddyBranchesViaAPI(): Promise<Array<{ name: string, sha: string, lastCommitDate: Date }>> {
     try {
       // Fetch all branches with pagination
       let allBranches: any[] = []
@@ -814,11 +1852,11 @@ export class GitHubProvider implements GitProvider {
         page++
       }
 
-      console.log(`🔍 Found ${allBranches.length} total branches in repository`)
+      this.logger.info(`🔍 Found ${allBranches.length} total branches in repository`)
 
-      // Filter for buddy-bot branches
-      const buddyBranches = allBranches.filter((branch: any) => branch.name.startsWith('buddy-bot/'))
-      console.log(`🤖 Found ${buddyBranches.length} buddy-bot branches`)
+      // Filter for buddy branches
+      const buddyBranches = allBranches.filter((branch: any) => isBuddyBranch(branch.name))
+      this.logger.info(`🤖 Found ${buddyBranches.length} buddy branches`)
 
       // Get detailed info for each branch including last commit date
       const branchDetails = await Promise.all(
@@ -832,7 +1870,7 @@ export class GitHubProvider implements GitProvider {
             }
           }
           catch (error) {
-            console.warn(`⚠️ Failed to get commit info for branch ${branch.name}:`, error)
+            this.logger.warn(`⚠️ Failed to get commit info for branch ${branch.name}: ${formatError(error)}`)
             return {
               name: branch.name,
               sha: branch.commit.sha,
@@ -845,28 +1883,19 @@ export class GitHubProvider implements GitProvider {
       return branchDetails
     }
     catch (error) {
-      console.warn('⚠️ Failed to fetch buddy-bot branches:', error)
+      this.logger.warn('⚠️ Failed to fetch buddy branches:', error)
       return []
     }
   }
 
   /**
-   * Get all buddy-bot branches that don't have associated open PRs
+   * Get all buddy branches that don't have associated open PRs
    */
-  async getOrphanedBuddyBotBranches(): Promise<Array<{ name: string, sha: string, lastCommitDate: Date }>> {
+  async getOrphanedBuddyBranches(): Promise<Array<{ name: string, sha: string, lastCommitDate: Date }>> {
     try {
-      const buddyBranches = await this.getBuddyBotBranches()
+      const buddyBranches = await this.getBuddyBranches()
 
-      // Try to get PR branches using local git first
-      let prBranches: Set<string>
-      try {
-        prBranches = await this.getOpenPRBranchesViaGit()
-      }
-      catch (error) {
-        console.warn('⚠️ Failed to get PR branches via git, falling back to API:', error)
-        const openPRs = await this.getPullRequests('open')
-        prBranches = new Set(openPRs.map(pr => pr.head))
-      }
+      const prBranches = await this.getOpenPRBranches()
 
       // Filter out branches that have active PRs
       const orphanedBranches = buddyBranches.filter(branch => !prBranches.has(branch.name))
@@ -874,179 +1903,49 @@ export class GitHubProvider implements GitProvider {
       return orphanedBranches
     }
     catch (error) {
-      console.warn('⚠️ Failed to identify orphaned branches:', error)
+      this.logger.warn('⚠️ Failed to identify orphaned branches:', error)
       return []
     }
   }
 
   /**
-   * Check if a PR is open by making HTTP request to GitHub PR page (no API auth needed)
+   * Tracks whether the most recent open-PR detection succeeded authoritatively
+   * (via the GitHub API). Consumed by cleanupStaleBranches to decide between
+   * "delete every orphan" and "fall back to age-based protection".
    */
-  private async isPROpen(prNumber: number): Promise<boolean> {
-    try {
-      const url = `https://github.com/${this.owner}/${this.repo}/pull/${prNumber}`
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'buddy-bot/1.0',
-        },
-      })
-
-      if (!response.ok) {
-        // If we can't fetch the PR page, assume it might be open (be conservative)
-        return true
-      }
-
-      const html = await response.text()
-
-      // Look for PR status indicators in the HTML
-      // Open PRs have: class="State State--open"
-      // Closed PRs have: class="State State--closed" or class="State State--merged"
-      const isOpen = html.includes('State--open') && !html.includes('State--closed') && !html.includes('State--merged')
-
-      return isOpen
-    }
-    catch (error) {
-      // If HTTP request fails, be conservative and assume PR might be open
-      console.warn(`⚠️ Could not check PR #${prNumber} status via HTTP:`, error)
-      return true
-    }
-  }
+  private prDetectionSuccessful = false
 
   /**
-   * Get branches that have open PRs using HTTP requests to GitHub (no API auth needed)
+   * Get the set of buddy branches that currently have open PRs.
+   *
+   * Uses the GitHub REST API as the authoritative source. Earlier versions
+   * scraped the PR HTML page for `State--open` CSS classes, which silently
+   * broke when GitHub removed those classes — every open PR was misreported
+   * as closed, causing cleanupStaleBranches to delete the live PR's branch
+   * (which in turn auto-closed the PR).
    */
-  private httpDetectionSuccessful = false
+  private async getOpenPRBranches(): Promise<Set<string>> {
+    this.prDetectionSuccessful = false
 
-  private async getOpenPRBranchesViaGit(): Promise<Set<string>> {
     try {
-      const protectedBranches = new Set<string>()
-      this.httpDetectionSuccessful = false
+      const openPRs = await this.getPullRequests('open')
+      const protectedBranches = new Set<string>(
+        openPRs
+          .map(pr => pr.head)
+          .filter(head => isBuddyBranch(head)),
+      )
 
-      console.log('🔍 Using HTTP requests to check actual PR status (no API auth needed)...')
-
-      // Method 1: Get PR numbers from GitHub PR refs and check their status via HTTP
-      try {
-        const prRefsOutput = await this.runCommand('git', ['ls-remote', 'origin', 'refs/pull/*/head'])
-        const prNumbers: number[] = []
-        const prBranchMap = new Map<number, string[]>() // PR number -> branch names
-
-        for (const line of prRefsOutput.split('\n')) {
-          if (line.trim()) {
-            // Extract PR number from ref: "sha refs/pull/123/head"
-            const parts = line.trim().split('\t')
-            if (parts.length === 2) {
-              const ref = parts[1] // refs/pull/123/head
-              const sha = parts[0]
-              const prMatch = ref.match(/refs\/pull\/(\d+)\/head/)
-
-              if (prMatch) {
-                const prNumber = Number.parseInt(prMatch[1])
-                prNumbers.push(prNumber)
-
-                // Find which buddy-bot branch has this SHA
-                try {
-                  const branchOutput = await this.runCommand('git', ['branch', '-r', '--contains', sha])
-                  const branches: string[] = []
-
-                  for (const branchLine of branchOutput.split('\n')) {
-                    const branchName = branchLine.trim().replace(/^origin\//, '')
-                    if (branchName.startsWith('buddy-bot/')) {
-                      branches.push(branchName)
-                    }
-                  }
-
-                  if (branches.length > 0) {
-                    prBranchMap.set(prNumber, branches)
-                  }
-                }
-                catch {
-                  // Ignore errors finding branches for specific SHAs
-                }
-              }
-            }
-          }
-        }
-
-        console.log(`📋 Found ${prNumbers.length} PR refs, checking their status via HTTP...`)
-
-        // Check each PR's status via HTTP (in batches to be nice to GitHub)
-        const batchSize = 5
-        let checkedCount = 0
-        let openCount = 0
-
-        for (let i = 0; i < prNumbers.length; i += batchSize) {
-          const batch = prNumbers.slice(i, i + batchSize)
-
-          // Process batch with small delay between requests
-          const batchPromises = batch.map(async (prNumber, index) => {
-            // Small delay to avoid overwhelming GitHub
-            await new Promise(resolve => setTimeout(resolve, index * 100))
-
-            const isOpen = await this.isPROpen(prNumber)
-            checkedCount++
-
-            if (isOpen) {
-              openCount++
-              // Protect all branches associated with this open PR
-              const branches = prBranchMap.get(prNumber) || []
-              for (const branch of branches) {
-                protectedBranches.add(branch)
-              }
-            }
-
-            return { prNumber, isOpen }
-          })
-
-          await Promise.all(batchPromises)
-
-          // Small delay between batches
-          if (i + batchSize < prNumbers.length) {
-            await new Promise(resolve => setTimeout(resolve, 500))
-          }
-        }
-
-        console.log(`✅ Checked ${checkedCount} PRs via HTTP: ${openCount} open, ${checkedCount - openCount} closed`)
-        console.log(`🛡️ Protected ${protectedBranches.size} branches with confirmed open PRs`)
-        console.log(`🎯 HTTP detection successful - no age-based protection needed`)
-        this.httpDetectionSuccessful = true
-      }
-      catch (error) {
-        console.warn('⚠️ Could not check PR status via HTTP, applying conservative fallback:', error)
-
-        // Only apply fallback protection if HTTP detection completely failed
-        try {
-          const allBuddyBranches = await this.getBuddyBotBranches()
-          const oneDayAgo = new Date()
-          oneDayAgo.setDate(oneDayAgo.getDate() - 1)
-
-          let fallbackCount = 0
-          for (const branch of allBuddyBranches) {
-            if (branch.lastCommitDate > oneDayAgo && !protectedBranches.has(branch.name)) {
-              protectedBranches.add(branch.name)
-              fallbackCount++
-            }
-          }
-
-          if (fallbackCount > 0) {
-            console.log(`🛡️ Emergency fallback: ${fallbackCount} very recent branches (< 1 day) protected due to HTTP failure`)
-          }
-        }
-        catch {
-          console.log('⚠️ Could not apply emergency fallback protection')
-        }
-      }
-
-      console.log(`🎯 HTTP-based analysis complete: protecting ${protectedBranches.size} branches total`)
-
+      this.logger.info(`🔍 GitHub API reports ${openPRs.length} open PR(s); ${protectedBranches.size} are buddy branches`)
+      this.logger.info(`🛡️ Protecting ${protectedBranches.size} branches with confirmed open PRs`)
+      this.prDetectionSuccessful = true
       return protectedBranches
     }
     catch (error) {
-      console.warn('⚠️ HTTP-based analysis failed, using conservative fallback:', error)
+      this.logger.warn('⚠️ Failed to fetch open PRs via API, falling back to age-based protection:', error)
 
       // Conservative fallback: protect branches less than 30 days old
       try {
-        const allBuddyBranches = await this.getBuddyBotBranches()
+        const allBuddyBranches = await this.getBuddyBranches()
         const thirtyDaysAgo = new Date()
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
 
@@ -1057,68 +1956,68 @@ export class GitHubProvider implements GitProvider {
           }
         }
 
-        console.log(`🛡️ Conservative fallback: protecting ${conservativeBranches.size} branches newer than 30 days`)
+        this.logger.info(`🛡️ Conservative fallback: protecting ${conservativeBranches.size} branches newer than 30 days`)
         return conservativeBranches
       }
       catch {
-        // Ultimate fallback: protect everything
-        console.log('🛡️ Ultimate fallback: protecting all branches')
+        // Ultimate fallback: leave prDetectionSuccessful=false so cleanupStaleBranches
+        // applies its age-based filter against whatever branches it can enumerate.
+        this.logger.info('⚠️ Could not enumerate branches for age-based fallback')
         return new Set<string>()
       }
     }
   }
 
   /**
-   * Clean up orphaned buddy-bot branches (with optional age filter for fallback scenarios)
+   * Clean up orphaned buddy branches (with optional age filter for fallback scenarios)
    */
   async cleanupStaleBranches(olderThanDays = 7, dryRun = false): Promise<{ deleted: string[], failed: string[] }> {
-    console.log(`🔍 Looking for buddy-bot branches without open PRs...`)
+    this.logger.info(`🔍 Looking for buddy branches without open PRs...`)
 
-    const orphanedBranches = await this.getOrphanedBuddyBotBranches()
-    console.log(`🔍 Found ${orphanedBranches.length} orphaned buddy-bot branches (no associated open PRs)`)
+    const orphanedBranches = await this.getOrphanedBuddyBranches()
+    this.logger.info(`🔍 Found ${orphanedBranches.length} orphaned buddy branches (no associated open PRs)`)
 
-    // Since we have 100% accurate HTTP-based PR detection, we can clean up ALL orphaned branches
-    // Only apply age filter if HTTP detection failed (indicated by very conservative protection)
+    // When PR detection succeeded authoritatively, every orphan is a true orphan.
+    // If detection fell back to age-based protection, only delete branches older
+    // than the configured threshold to avoid wiping out branches whose live PRs
+    // we couldn't verify.
     let branchesToDelete = orphanedBranches
 
-    // Use the HTTP detection success flag to determine cleanup strategy
-    if (this.httpDetectionSuccessful) {
-      // HTTP detection worked perfectly - clean up ALL orphaned branches regardless of age
-      console.log(`🎯 HTTP detection successful - cleaning up ALL ${branchesToDelete.length} orphaned branches (any age)`)
+    if (this.prDetectionSuccessful) {
+      this.logger.info(`🎯 PR detection successful - cleaning up ALL ${branchesToDelete.length} orphaned branches (any age)`)
     }
     else {
-      // HTTP detection failed - apply conservative age filter
       const cutoffDate = new Date()
       cutoffDate.setDate(cutoffDate.getDate() - olderThanDays)
       branchesToDelete = orphanedBranches.filter(branch => branch.lastCommitDate < cutoffDate)
-      console.log(`⚠️ HTTP detection failed - only deleting branches older than ${olderThanDays} days`)
-      console.log(`🔍 Found ${branchesToDelete.length} stale buddy-bot branches (older than ${olderThanDays} days)`)
+      this.logger.info(`⚠️ PR detection failed - only deleting branches older than ${olderThanDays} days`)
+      this.logger.info(`🔍 Found ${branchesToDelete.length} stale buddy branches (older than ${olderThanDays} days)`)
     }
 
     // Show some examples of what we found
     if (branchesToDelete.length > 0) {
-      console.log('📋 Sample of branches to delete:')
+      this.logger.info('📋 Sample of branches to delete:')
       branchesToDelete.slice(0, 5).forEach((branch) => {
         const daysOld = Math.floor((Date.now() - branch.lastCommitDate.getTime()) / (1000 * 60 * 60 * 24))
-        console.log(`  - ${branch.name} (${daysOld} days old)`)
+        this.logger.info(`  - ${branch.name} (${daysOld} days old)`)
       })
       if (branchesToDelete.length > 5) {
-        console.log(`  ... and ${branchesToDelete.length - 5} more`)
+        this.logger.info(`  ... and ${branchesToDelete.length - 5} more`)
       }
     }
 
     if (branchesToDelete.length === 0) {
-      console.log('✅ No branches to clean up!')
+      this.logger.info('✅ No branches to clean up!')
       return { deleted: [], failed: [] }
     }
 
     const staleBranches = branchesToDelete
 
     if (dryRun) {
-      console.log('🔍 [DRY RUN] Would delete the following branches:')
+      this.logger.info('🔍 [DRY RUN] Would delete the following branches:')
       staleBranches.forEach((branch) => {
         const daysOld = Math.floor((Date.now() - branch.lastCommitDate.getTime()) / (1000 * 60 * 60 * 24))
-        console.log(`  - ${branch.name} (${daysOld} days old, last commit: ${branch.lastCommitDate.toISOString()})`)
+        this.logger.info(`  - ${branch.name} (${daysOld} days old, last commit: ${branch.lastCommitDate.toISOString()})`)
       })
       return { deleted: staleBranches.map(b => b.name), failed: [] }
     }
@@ -1126,7 +2025,7 @@ export class GitHubProvider implements GitProvider {
     const deleted: string[] = []
     const failed: string[] = []
 
-    console.log(`🧹 Cleaning up ${staleBranches.length} stale branches...`)
+    this.logger.info(`🧹 Cleaning up ${staleBranches.length} stale branches...`)
 
     // Delete branches in smaller batches with longer delays to avoid rate limiting
     const batchSize = 5 // Reduced from 10 to be more conservative
@@ -1135,18 +2034,18 @@ export class GitHubProvider implements GitProvider {
       const batchNumber = Math.floor(i / batchSize) + 1
       const totalBatches = Math.ceil(staleBranches.length / batchSize)
 
-      console.log(`🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} branches)`)
+      this.logger.info(`🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} branches)`)
 
       // Process branches sequentially within batch to avoid overwhelming the API
       for (const branch of batch) {
         try {
           await this.deleteBranch(branch.name)
           deleted.push(branch.name)
-          console.log(`✅ Deleted: ${branch.name}`)
+          this.logger.info(`✅ Deleted: ${branch.name}`)
         }
         catch (error) {
           failed.push(branch.name)
-          console.warn(`❌ Failed to delete ${branch.name}:`, error)
+          this.logger.warn(`❌ Failed to delete ${branch.name}: ${formatError(error)}`)
         }
 
         // Small delay between individual deletions within batch
@@ -1156,37 +2055,44 @@ export class GitHubProvider implements GitProvider {
       // Longer delay between batches to be respectful of API limits
       if (i + batchSize < staleBranches.length) {
         const delay = 3000 // 3 seconds between batches
-        console.log(`⏳ Waiting ${delay / 1000} seconds before next batch...`)
+        this.logger.info(`⏳ Waiting ${delay / 1000} seconds before next batch...`)
         await new Promise(resolve => setTimeout(resolve, delay))
       }
     }
 
-    console.log(`🎉 Cleanup complete!`)
-    console.log(`  ✅ Successfully deleted: ${deleted.length} branches`)
-    console.log(`  ❌ Failed to delete: ${failed.length} branches`)
+    this.logger.info(`🎉 Cleanup complete!`)
+    this.logger.info(`  ✅ Successfully deleted: ${deleted.length} branches`)
+    this.logger.info(`  ❌ Failed to delete: ${failed.length} branches`)
 
     if (failed.length > 0) {
-      console.log('❌ Failed branches:')
-      failed.forEach(branch => console.log(`  - ${branch}`))
+      this.logger.info('❌ Failed branches:')
+      failed.forEach(branch => this.logger.info(`  - ${branch}`))
     }
 
     return { deleted, failed }
   }
 
   /**
-   * Make authenticated API request to GitHub
+   * Make an authenticated API request to GitHub.
+   *
+   * @param endpoint - `METHOD /path` pair, e.g. `GET /repos/o/r/pulls`
+   * @param data - JSON body, sent only for POST/PATCH/PUT
+   * @param tokenOverride - Use a different token than the instance default
+   * @param retries - Transport-level retry attempts for rate limits
+   * @throws {GitHubApiError} On any non-2xx response
    */
-  private async apiRequest(endpoint: string, data?: any): Promise<any> {
+  private async apiRequest(endpoint: string, data?: any, tokenOverride?: string, retries = 0): Promise<any> {
     const [method, path] = endpoint.split(' ')
     const url = `${this.apiUrl}${path}`
+    const effectiveToken = tokenOverride || this.token
 
     const options: RequestInit = {
       method,
       headers: {
-        'Authorization': `Bearer ${this.token}`,
+        'Authorization': `Bearer ${effectiveToken}`,
         'Accept': 'application/vnd.github.v3+json',
         'Content-Type': 'application/json',
-        'User-Agent': 'buddy-bot',
+        'User-Agent': 'buddy',
       },
     }
 
@@ -1194,11 +2100,30 @@ export class GitHubProvider implements GitProvider {
       options.body = JSON.stringify(data)
     }
 
-    const response = await fetch(url, options)
+    const response = await fetchWithTimeout(url, {
+      ...options,
+      retries,
+      onRetry: ({ delayMs, reason }) =>
+        this.logger.info(`⏳ ${reason} on ${method} ${path}, retrying in ${Math.round(delayMs / 1000)}s...`),
+    })
 
     if (!response.ok) {
       const errorBody = await response.text()
-      throw new Error(`GitHub API error: ${response.status} ${response.statusText}\n${errorBody}`)
+      const tokenHint = effectiveToken
+        ? 'token present ([REDACTED])'
+        : 'NO TOKEN — ensure GITHUB_TOKEN or BUDDY_TOKEN is set'
+      throw new GitHubApiError(
+        `GitHub API error: ${response.status} ${response.statusText}\n`
+        + `  URL: ${method} ${url}\n`
+        + `  Auth: ${tokenHint}\n`
+        + `  Repo: ${this.owner}/${this.repo}\n`
+        + `${errorBody}`,
+        response.status,
+        method,
+        url,
+        `${this.owner}/${this.repo}`,
+        errorBody,
+      )
     }
 
     if (response.headers.get('content-type')?.includes('application/json')) {
@@ -1209,36 +2134,27 @@ export class GitHubProvider implements GitProvider {
   }
 
   /**
-   * Make authenticated API request to GitHub with retry logic for rate limiting
+   * Make an authenticated API request, retrying through rate limits.
+   *
+   * Retry now lives in the transport, which can read `Retry-After` and
+   * `x-ratelimit-reset` off the response instead of guessing a backoff from
+   * the error message — and which will not replay a POST that the server may
+   * already have acted on.
+   *
+   * @param endpoint - `METHOD /path` pair
+   * @param data - JSON body, sent only for POST/PATCH/PUT
+   * @param maxRetries - Total attempts allowed, including the first
    */
   private async apiRequestWithRetry(endpoint: string, data?: any, maxRetries = 3): Promise<any> {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await this.apiRequest(endpoint, data)
-      }
-      catch (error: any) {
-        const isRateLimit = error.message?.includes('403') && error.message?.includes('rate limit')
-
-        if (isRateLimit && attempt < maxRetries) {
-          // Extract retry-after from error or use exponential backoff
-          const baseDelay = 2 ** attempt * 1000 // 2s, 4s, 8s
-          const jitter = Math.random() * 1000 // Add up to 1s jitter
-          const delay = baseDelay + jitter
-
-          console.log(`⏳ Rate limited, waiting ${Math.round(delay / 1000)}s before retry ${attempt}/${maxRetries}...`)
-          await new Promise(resolve => setTimeout(resolve, delay))
-          continue
-        }
-
-        // If not rate limit or max retries reached, throw the error
-        throw error
-      }
-    }
+    return this.apiRequest(endpoint, data, undefined, Math.max(0, maxRetries - 1))
   }
 
   async createIssue(options: IssueOptions): Promise<Issue> {
+    // Invalidate issue cache since we're creating new data
+    this.cache.issues.clear()
+
     try {
-      const response = await this.apiRequest(`POST /repos/${this.owner}/${this.repo}/issues`, {
+      const response = await this.apiRequestWithRetry(`POST /repos/${this.owner}/${this.repo}/issues`, {
         title: options.title,
         body: options.body,
         assignees: options.assignees || [],
@@ -1246,7 +2162,7 @@ export class GitHubProvider implements GitProvider {
         milestone: options.milestone,
       })
 
-      console.log(`✅ Created issue #${response.number}: ${options.title}`)
+      this.logger.info(`✅ Created issue #${response.number}: ${options.title}`)
 
       return {
         number: response.number,
@@ -1264,16 +2180,38 @@ export class GitHubProvider implements GitProvider {
       }
     }
     catch (error) {
-      console.error(`❌ Failed to create issue: ${options.title}`, error)
+      this.logger.error(`❌ Failed to create issue: ${options.title}: ${formatError(error)}`)
       throw error
     }
   }
 
   async getIssues(state: 'open' | 'closed' | 'all' = 'open'): Promise<Issue[]> {
-    try {
-      const response = await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/issues?state=${state}&sort=updated&direction=desc`)
+    // Check cache first
+    const cacheKey = `${state}`
+    const cached = this.cache.issues.get(cacheKey)
+    if (cached && this.isCacheValid(cached.timestamp)) {
+      this.logger.info(`📦 Using cached issues (state: ${state}, ${cached.data.length} issues)`)
+      return cached.data
+    }
 
-      return response
+    try {
+      // Paginate — without this, the dashboard issue can be missed on repos
+      // with 100+ open issues, causing duplicate dashboard creation.
+      const perPage = 100
+      const maxPages = 20
+      const all: any[] = []
+      for (let page = 1; page <= maxPages; page++) {
+        const response = await this.apiRequestWithRetry(
+          `GET /repos/${this.owner}/${this.repo}/issues?state=${state}&sort=updated&direction=desc&per_page=${perPage}&page=${page}`,
+        )
+        if (!Array.isArray(response) || response.length === 0)
+          break
+        all.push(...response)
+        if (response.length < perPage)
+          break
+      }
+
+      const issues = all
         .filter((issue: any) => !issue.pull_request) // Filter out PRs (they're returned as issues by GitHub API)
         .map((issue: any) => ({
           number: issue.number,
@@ -1289,14 +2227,23 @@ export class GitHubProvider implements GitProvider {
           labels: issue.labels?.map((l: any) => typeof l === 'string' ? l : l.name) || [],
           pinned: false, // GitHub API doesn't return pinned status directly
         }))
+
+      // Cache the result
+      this.cache.issues.set(cacheKey, { data: issues, timestamp: Date.now() })
+      this.logger.info(`✅ Fetched and cached ${issues.length} issues (state: ${state})`)
+
+      return issues
     }
     catch (error) {
-      console.error('❌ Failed to get issues:', error)
+      this.logger.error('❌ Failed to get issues:', error)
       throw error
     }
   }
 
   async updateIssue(issueNumber: number, options: Partial<IssueOptions>): Promise<Issue> {
+    // Invalidate issue cache since we're modifying data
+    this.cache.issues.clear()
+
     try {
       const updateData: any = {}
 
@@ -1311,9 +2258,9 @@ export class GitHubProvider implements GitProvider {
       if (options.milestone !== undefined)
         updateData.milestone = options.milestone
 
-      const response = await this.apiRequest(`PATCH /repos/${this.owner}/${this.repo}/issues/${issueNumber}`, updateData)
+      const response = await this.apiRequestWithRetry(`PATCH /repos/${this.owner}/${this.repo}/issues/${issueNumber}`, updateData)
 
-      console.log(`✅ Updated issue #${issueNumber}: ${response.title}`)
+      this.logger.info(`✅ Updated issue #${issueNumber}: ${response.title}`)
 
       return {
         number: response.number,
@@ -1331,36 +2278,76 @@ export class GitHubProvider implements GitProvider {
       }
     }
     catch (error) {
-      console.error(`❌ Failed to update issue #${issueNumber}:`, error)
+      this.logger.error(`❌ Failed to update issue #${issueNumber}: ${formatError(error)}`)
       throw error
     }
   }
 
   async closeIssue(issueNumber: number): Promise<void> {
+    // Invalidate issue cache since we're modifying data
+    this.cache.issues.clear()
+
     try {
-      await this.apiRequest(`PATCH /repos/${this.owner}/${this.repo}/issues/${issueNumber}`, {
+      await this.apiRequestWithRetry(`PATCH /repos/${this.owner}/${this.repo}/issues/${issueNumber}`, {
         state: 'closed',
       })
 
-      console.log(`✅ Closed issue #${issueNumber}`)
+      this.logger.info(`✅ Closed issue #${issueNumber}`)
     }
     catch (error) {
-      console.error(`❌ Failed to close issue #${issueNumber}:`, error)
+      this.logger.error(`❌ Failed to close issue #${issueNumber}: ${formatError(error)}`)
       throw error
     }
   }
 
-  async unpinIssue(issueNumber: number): Promise<void> {
-    try {
-      await this.apiRequest(`DELETE /repos/${this.owner}/${this.repo}/issues/${issueNumber}/pin`, undefined)
-    }
-    catch (error: any) {
-      console.log(`⚠️ Failed to unpin issue #${issueNumber}:`, error)
-      // Don't throw error for pinning failures as it's not critical
-    }
+  /**
+   * Pin an issue to the top of the repository's issue list.
+   *
+   * Pinning is a GraphQL-only operation — the REST API has no endpoint for it.
+   * GitHub allows at most three pinned issues per repository; exceeding that
+   * is reported as a failure and logged rather than thrown, since a dashboard
+   * that failed to pin is still a usable dashboard.
+   *
+   * @param issueNumber - Issue to pin
+   * @returns `true` when the issue is now pinned
+   */
+  async pinIssue(issueNumber: number): Promise<boolean> {
+    return await this.setIssuePinned(issueNumber, true)
   }
 
-  // Note: GitHub REST API does not support pinning issues programmatically
-  // Pinning can only be done manually through the GitHub web interface
-  // See: https://docs.github.com/en/issues/tracking-your-work-with-issues/administering-issues/pinning-an-issue-to-your-repository
+  /**
+   * Remove an issue from the repository's pinned list.
+   *
+   * @param issueNumber - Issue to unpin
+   * @returns `true` when the issue is no longer pinned
+   */
+  async unpinIssue(issueNumber: number): Promise<boolean> {
+    return await this.setIssuePinned(issueNumber, false)
+  }
+
+  private async setIssuePinned(issueNumber: number, pinned: boolean): Promise<boolean> {
+    const action = pinned ? 'pin' : 'unpin'
+    try {
+      const issue = await this.apiRequest(`GET /repos/${this.owner}/${this.repo}/issues/${issueNumber}`)
+      const mutation = pinned
+        ? `mutation($issueId: ID!) { pinIssue(input: { issueId: $issueId }) { issue { number } } }`
+        : `mutation($issueId: ID!) { unpinIssue(input: { issueId: $issueId }) { issue { number } } }`
+
+      const response = await this.graphqlRequest(mutation, { issueId: issue.node_id })
+
+      if (response.errors?.length) {
+        const message = response.errors.map((error: { message: string }) => error.message).join('; ')
+        this.logger.info(`⚠️ Failed to ${action} issue #${issueNumber}: ${message}`)
+        return false
+      }
+
+      this.logger.info(`📌 ${pinned ? 'Pinned' : 'Unpinned'} issue #${issueNumber}`)
+      return true
+    }
+    catch (error) {
+      // Pinning is cosmetic — never fail a dashboard run over it.
+      this.logger.info(`⚠️ Failed to ${action} issue #${issueNumber}: ${formatError(error)}`)
+      return false
+    }
+  }
 }

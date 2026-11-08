@@ -7,22 +7,24 @@ Buddy provides comprehensive support for multiple dependency file formats beyond
 Buddy automatically detects and updates the following dependency file formats:
 
 ### Traditional Package Files
+
 - **package.json** - npm, yarn, pnpm, and Bun dependencies
 
 ### pkgx and Launchpad Dependency Files
-- **deps.yaml** / **deps.yml** - Main dependency format used by pkgx and Launchpad
-- **dependencies.yaml** / **dependencies.yml** - Alternative dependency file naming
-- **pkgx.yaml** / **pkgx.yml** - pkgx-specific dependency files
-- **.deps.yaml** / **.deps.yml** - Hidden dependency configuration files
+
+- **deps.yaml**/**deps.yml** - Main dependency format used by pkgx and Launchpad
+- **dependencies.yaml**/**dependencies.yml** - Alternative dependency file naming
+- **pkgx.yaml**/**pkgx.yml** - pkgx-specific dependency files
+- **.deps.yaml**/**.deps.yml** - Hidden dependency configuration files
 
 ## How It Works
 
-Buddy uses the `ts-pkgx` library to parse and resolve dependency files, ensuring full compatibility with the pkgx registry ecosystem while supporting tools like Launchpad that reuse the same registry format.
+Buddy uses the `ts-pantry` library to parse and resolve dependency files, ensuring full compatibility with the pkgx registry ecosystem while supporting tools like Launchpad that reuse the same registry format.
 
 ### Automatic Detection
 
 ```bash
-# Buddy automatically scans for these files:
+# Buddy automatically scans for these files
 my-project/
 ├── package.json              # ✅ npm dependencies
 ├── deps.yaml                 # ✅ Launchpad/pkgx dependencies
@@ -66,24 +68,24 @@ devDependencies:
 ```yaml
 # dependencies.yaml
 dependencies:
-  # Runtime dependencies
+# Runtime dependencies
   node: ^20.0.0
   python: ~3.11.0
 
-  # Package managers
+# Package managers
   npm: ^10.0.0
   pip: latest
 
-  # Development tools
+# Development tools
   git: ^2.40.0
 
 devDependencies:
-  # Linting and formatting
+# Linting and formatting
   eslint: ^8.0.0
   prettier: ^3.0.0
   black: ^23.0.0
 
-  # Testing
+# Testing
   jest: ^29.0.0
   pytest: ^7.0.0
 
@@ -98,11 +100,11 @@ optionalDependencies:
 ```yaml
 # .deps.yaml - Hidden configuration file
 dependencies:
-  # System-level dependencies
+# System-level dependencies
   curl: ^8.0.0
   jq: ^1.6.0
 
-  # CI/CD tools
+# CI/CD tools
   gh: ^2.0.0
   act: ^0.2.0
 ```
@@ -115,22 +117,22 @@ Buddy preserves your version constraints when updating dependency files:
 
 ```yaml
 dependencies:
-  # Caret range (compatible updates)
+# Caret range (compatible updates)
   typescript: ^5.0.0 # >=5.0.0 <6.0.0
 
-  # Tilde range (patch updates)
+# Tilde range (patch updates)
   eslint: ~8.45.0 # >=8.45.0 <8.46.0
 
-  # Greater than or equal
+# Greater than or equal
   node: '>=20.0.0' # Any version >= 20.0.0
 
-  # Exact version
+# Exact version
   python: 3.11.5 # Exactly 3.11.5
 
-  # Latest version
+# Latest version
   bun: latest # Always the latest
 
-  # Version ranges
+# Version ranges
   go: '>=1.20.0 <1.22.0' # Between versions
 ```
 
@@ -145,11 +147,11 @@ dependencies:
   vue: 3.0.0 # Exact version
 
 # After update (constraints preserved)
-# dependencies:
-#   express: ^4.18.2    # Caret preserved
-#   lodash: ~4.17.21    # Tilde preserved
-#   react: ">=18.2.0"   # Range preserved
-#   vue: 3.0.5          # Exact updated
+# dependencies
+# express: ^4.18.2    # Caret preserved
+# lodash: ~4.17.21    # Tilde preserved
+# react: ">=18.2.0"   # Range preserved
+# vue: 3.0.5          # Exact updated
 ```
 
 ## Configuration
@@ -157,7 +159,7 @@ dependencies:
 ### Global Settings
 
 ```typescript
-// buddy-bot.config.ts
+// buddy.config.ts
 export default {
   packages: {
     strategy: 'patch', // Apply to all file types
@@ -172,32 +174,49 @@ export default {
     groups: [
       {
         name: 'Development Tools',
-        packages: ['eslint', 'prettier', 'typescript'],
+        patterns: ['eslint', 'prettier', 'typescript'],
         strategy: 'minor'
       },
       {
         name: 'Runtime Dependencies',
-        packages: ['node', 'python', 'bun'],
+        patterns: ['node', 'python', 'bun'],
         strategy: 'patch' // Conservative for runtimes
       }
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### File-Specific Configuration
 
+Strategy per file type is expressed as a package rule matching on the manifest
+path:
+
 ```typescript
 export default {
   packages: {
-    // Different strategies for different file types
-    fileStrategies: {
-      'package.json': 'minor', // npm packages
-      'deps.yaml': 'patch', // Launchpad/pkgx tools
-      '.deps.yaml': 'all' // Hidden config files
-    }
+    strategy: 'all',
+    rules: [
+      { matchFiles: ['**/package.json'], strategy: 'minor' },
+      { matchFiles: ['**/deps.yaml'], strategy: 'patch' },
+      { matchFiles: ['**/.deps.yaml'], strategy: 'all' }
+    ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
+```
+
+`matchEcosystems` is often the better matcher when you mean "all npm packages"
+rather than "packages declared in this file":
+
+```typescript
+export default {
+  packages: {
+    rules: [
+      { matchEcosystems: ['npm'], strategy: 'minor' },
+      { matchEcosystems: ['github-actions'], strategy: 'all', autoMerge: true }
+    ]
+  }
+} satisfies BuddyConfig
 ```
 
 ## Pull Request Integration
@@ -224,29 +243,36 @@ This PR updates dependencies across multiple formats:
 | bun | ^1.0.0 | ^1.0.5 | .deps.yaml |
 
 ## Changes Summary
+
 - 2 package.json updates (development dependencies)
 - 2 dependency file updates (tooling and runtime)
 - All updates are backward compatible
+
 ```
 
 ### Separate PRs Option
 
-Configure separate PRs for different file types:
+To split updates by ecosystem into their own pull requests, give each
+ecosystem its own group name:
 
 ```typescript
 export default {
+  packages: {
+    rules: [
+      { matchEcosystems: ['npm'], groupName: 'npm dependencies' },
+      { matchEcosystems: ['pkgx'], groupName: 'pkgx tools' },
+      { matchEcosystems: ['github-actions'], groupName: 'GitHub Actions' }
+    ]
+  },
   pullRequest: {
-    groupByFileType: true, // Create separate PRs per file type
-
-    // Custom PR titles
-    titleFormat: {
-      'package.json': 'chore(deps): update npm dependencies',
-      'deps.yaml': 'chore(tools): update pkgx dependencies',
-      'default': 'chore(deps): update {fileType} dependencies'
-    }
+    // One format string for every PR; `{title}` is the generated summary.
+    titleFormat: 'chore(deps): {title}'
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
+
+`titleFormat` is a single template, not a map: the per-ecosystem wording comes
+from the group name that lands in `{title}`.
 
 ## Monorepo Support
 
@@ -275,58 +301,69 @@ monorepo/
 
 ### Monorepo Configuration
 
+Every manifest in the tree is found without being listed. To scope settings to
+a directory, match on the manifest path:
+
 ```typescript
 export default {
   packages: {
-    workspaces: [
-      'packages/*/package.json',
-      'packages/*/deps.{yaml,yml}',
-      'tools/*/deps.yaml'
-    ],
-
-    groups: [
+    rules: [
       {
-        name: 'Frontend Dependencies',
-        packages: ['react', 'typescript', 'vite'],
-        workspaces: ['packages/frontend/**']
+        matchFiles: ['packages/frontend/**'],
+        matchPackages: ['react', 'typescript', 'vite'],
+        groupName: 'Frontend Dependencies'
       },
       {
-        name: 'Build Tools',
-        packages: ['esbuild', 'rollup', 'webpack'],
-        workspaces: ['tools/build/**']
+        matchFiles: ['tools/build/**'],
+        matchPackages: ['esbuild', 'rollup', 'webpack'],
+        groupName: 'Build Tools'
       }
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ## CLI Commands
 
-### Scan Specific File Types
+### Scanning
+
+Every manifest in the repository is scanned in one pass; there is no flag that
+narrows a run to one file type. What the CLI does take is a package filter and
+a strategy:
 
 ```bash
-# Scan only package.json files
-buddy-bot scan --file-type package.json
+# Scan every dependency file Buddy supports
+buddy scan
 
-# Scan only dependency files
-buddy-bot scan --file-type deps.yaml
+# Scan named packages only
+buddy scan --packages "bun,typescript"
 
-# Scan specific files
-buddy-bot scan --files "deps.yaml,package.json"
+# Scan a family of packages by pattern
+buddy scan --pattern "@types/*"
+
+# Scan with a specific strategy
+buddy scan --strategy patch
 ```
 
-### Update Specific Formats
+### Restricting Formats
 
-```bash
-# Update only npm dependencies
-buddy-bot update --package-manager npm
+Narrowing by file or ecosystem is config, not a flag. A rule with
+`enabled: false` drops matching updates entirely, so the run only proposes what
+is left:
 
-# Update only pkgx dependencies
-buddy-bot update --package-manager pkgx
-
-# Update with different strategies per type
-buddy-bot update --strategy package.json:minor,deps.yaml:patch
+```typescript
+export default {
+  packages: {
+    rules: [
+      // Leave the pkgx/Launchpad files alone; npm only
+      { matchEcosystems: ['pkgx'], enabled: false }
+    ]
+  }
+} satisfies BuddyConfig
 ```
+
+Per-format strategies work the same way — see
+[file-specific configuration](#file-specific-configuration) above.
 
 ## Troubleshooting
 
@@ -343,8 +380,8 @@ cat deps.yaml
 
 **pkgx resolution errors:**
 ```bash
-# Verify ts-pkgx can parse the file
-bunx ts-pkgx resolve deps.yaml
+# Verify ts-pantry can parse the file
+bunx ts-pantry resolve-deps deps.yaml
 
 # Check for syntax errors
 yamllint deps.yaml
@@ -357,14 +394,11 @@ yamllint deps.yaml
 # ❌ Avoid: 1.*, ^1.0, ~2
 ```
 
-### Debug Mode
+### Verbose Mode
 
 ```bash
-# Enable verbose logging for dependency files
-buddy-bot scan --verbose --debug dependency-files
-
-# Show file detection process
-buddy-bot scan --show-files
+# Log the file detection and resolution process
+buddy scan --verbose
 ```
 
 ## Best Practices

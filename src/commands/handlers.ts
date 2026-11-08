@@ -1,0 +1,184 @@
+import type { GitProvider } from '../git/provider'
+import type { BuddyConfig } from '../types'
+import type { CommandContext, CommandHandler, CommandOutcome } from './dispatcher'
+import { createAiClient } from '../ai'
+
+/** Everything the built-in handlers need to act. */
+export interface HandlerDeps {
+  config: BuddyConfig
+  provider: GitProvider
+  /** Review a pull request and post the result */
+  review: (prNumber: number, options: { full?: boolean, summaryOnly?: boolean }) => Promise<string>
+  /** Rebase a dependency update pull request */
+  rebase: (prNumber: number) => Promise<string>
+  /** Re-evaluate auto-merge conditions now */
+  merge: () => Promise<number[]>
+  /** Diagnose the failing checks on a pull request */
+  fixCi: (prNumber: number) => Promise<string>
+  /** Turn an issue or pull request into an implementation plan */
+  plan: (number: number, isPullRequest: boolean, request: string) => Promise<string>
+  /** Close the review threads Buddy opened on a pull request */
+  resolve: (prNumber: number) => Promise<string>
+  /** Record a durable note */
+  remember: (text: string, context: CommandContext) => Promise<string>
+}
+
+/**
+ * Build the built-in command handlers.
+ *
+ * Handlers are thin: each routes to machinery that already exists and is
+ * tested on its own, so the command layer stays a dispatch concern rather than
+ * a second implementation of every feature.
+ *
+ * @param deps - Configuration, provider and the operations to route to
+ * @returns Handlers keyed by canonical command name
+ */
+export function createHandlers(deps: HandlerDeps): Record<string, CommandHandler> {
+  return {
+    async review(context): Promise<CommandOutcome> {
+      if (!context.isPullRequest)
+        return { handled: false, reply: 'There is nothing to review — this is an issue, not a pull request.' }
+
+      const summary = await deps.review(context.number, {})
+      return { handled: true, reply: summary }
+    },
+
+    async 'full-review'(context): Promise<CommandOutcome> {
+      if (!context.isPullRequest)
+        return { handled: false, reply: 'There is nothing to review — this is an issue, not a pull request.' }
+
+      // A full review deliberately ignores previously-reported findings, which
+      // is the only way to get a finding back after dismissing it.
+      const summary = await deps.review(context.number, { full: true })
+      return { handled: true, reply: summary }
+    },
+
+    async summary(context): Promise<CommandOutcome> {
+      if (!context.isPullRequest)
+        return { handled: false, reply: 'There is nothing to summarize — this is an issue, not a pull request.' }
+
+      const summary = await deps.review(context.number, { summaryOnly: true })
+      return { handled: true, reply: summary }
+    },
+
+    async pause(context): Promise<CommandOutcome> {
+      await setPaused(deps, context.number, true)
+      return { handled: true, reply: 'Paused. I will not review this pull request again until you say `@buddy resume`.' }
+    },
+
+    async resume(context): Promise<CommandOutcome> {
+      await setPaused(deps, context.number, false)
+      return { handled: true, reply: 'Resumed. I will review the next push.' }
+    },
+
+    async ignore(context): Promise<CommandOutcome> {
+      await setPaused(deps, context.number, true)
+      return { handled: true, reply: 'Understood — I will leave this pull request alone.' }
+    },
+
+    async rebase(context): Promise<CommandOutcome> {
+      const result = await deps.rebase(context.number)
+      return { handled: true, reply: result }
+    },
+
+    async merge(context): Promise<CommandOutcome> {
+      const merged = await deps.merge()
+
+      return {
+        handled: true,
+        reply: merged.includes(context.number)
+          ? 'Merged.'
+          : 'This pull request does not currently qualify for auto-merge. '
+            + 'Check the conditions in your config and whether its checks have passed.',
+      }
+    },
+
+    async 'fix-ci'(context): Promise<CommandOutcome> {
+      // A comment cannot name a run, so this used to refuse outright. It can
+      // now find one: the newest failing run at the pull request's head.
+      if (!context.isPullRequest) {
+        return {
+          handled: false,
+          reply: 'There are no checks to look at — this is an issue, not a pull request.',
+        }
+      }
+
+      // The diagnosis is posted as its own comment by the run itself, which is
+      // where the evidence and the log excerpt belong. Repeating it here would
+      // put the same wall of text on the thread twice.
+      const status = await deps.fixCi(context.number)
+      return { handled: true, reply: status }
+    },
+
+    async remember(context): Promise<CommandOutcome> {
+      const text = context.command.args.trim()
+      if (!text)
+        return { handled: false, reply: 'Tell me what to remember, e.g. `@buddy remember we pin react to 17`.' }
+
+      const reply = await deps.remember(text, context)
+      return { handled: true, reply }
+    },
+
+    async resolve(context): Promise<CommandOutcome> {
+      if (!context.isPullRequest) {
+        return {
+          handled: false,
+          reply: 'There are no review threads here — this is an issue, not a pull request.',
+        }
+      }
+
+      const status = await deps.resolve(context.number)
+      return { handled: true, reply: status }
+    },
+
+    async plan(context): Promise<CommandOutcome> {
+      // Answered as the reply rather than posted separately: the plan *is* the
+      // response to the comment, and `handle-comment` already posts one.
+      const plan = await deps.plan(context.number, context.isPullRequest, context.command.args.trim())
+      return { handled: true, reply: plan }
+    },
+
+    async chat(context): Promise<CommandOutcome> {
+      const ai = createAiClient(deps.config, context.logger)
+      if (!ai) {
+        return {
+          handled: false,
+          reply: 'I need an AI provider configured to answer questions. See https://buddy.sh/ai/providers',
+        }
+      }
+
+      const response = await ai.complete({
+        system: 'You are Buddy, answering a question in a pull request or issue thread. '
+          + 'Be brief and concrete. If you do not know, say so rather than guessing.',
+        messages: [{ role: 'user', content: context.command.args }],
+      })
+
+      return { handled: true, reply: response.text }
+    },
+  }
+}
+
+/**
+ * Flip the paused flag in a pull request's review state.
+ *
+ * Pausing is stored in the same marker the review engine reads, so a paused
+ * pull request is skipped by `needsReview` without any separate bookkeeping.
+ */
+async function setPaused(deps: HandlerDeps, prNumber: number, paused: boolean): Promise<void> {
+  const prs = await deps.provider.getPullRequests('open')
+  const pr = prs.find(candidate => candidate.number === prNumber)
+  if (!pr)
+    return
+
+  const { parseReviewState, upsertReviewState } = await import('../review/marker')
+  const state = parseReviewState(pr.body)
+
+  await deps.provider.updatePullRequest(prNumber, {
+    body: upsertReviewState(pr.body, {
+      reviewedSha: state?.reviewedSha ?? '',
+      fingerprints: state?.fingerprints ?? [],
+      reviewedAt: state?.reviewedAt ?? new Date().toISOString(),
+      ...(paused ? { paused: true } : {}),
+    }),
+  })
+}

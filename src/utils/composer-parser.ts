@@ -1,5 +1,6 @@
 import type { Dependency, PackageFile } from '../types'
 import { readFileSync } from 'node:fs'
+import { getDefaultLogger } from './logger'
 
 /**
  * Interface for Composer package data structure
@@ -78,7 +79,7 @@ export async function parseComposerJson(filePath: string, content: string): Prom
     }
   }
   catch (error) {
-    console.warn(`Failed to parse composer.json file ${filePath}:`, error)
+    getDefaultLogger().warn(`Failed to parse composer.json file ${filePath}:`, error)
     return null
   }
 }
@@ -127,7 +128,7 @@ export async function parseComposerLock(filePath: string, content: string): Prom
     }
   }
   catch (error) {
-    console.warn(`Failed to parse composer.lock file ${filePath}:`, error)
+    getDefaultLogger().warn(`Failed to parse composer.lock file ${filePath}:`, error)
     return null
   }
 }
@@ -222,10 +223,13 @@ export async function generateComposerUpdates(updates: Array<{ name: string, new
           // and just update the version numbers
           let newVersion: string
           if (currentVersionInFile.includes(',')) {
-            // Complex constraint - update version numbers while preserving structure
+            // Complex constraint - update version numbers while preserving structure.
+            // Capture the first version token once (not on every replace callback) so
+            // a null match short-circuit can't silently skip the replacement.
+            const firstVersionMatch = currentVersionInFile.match(/\d+\.\d+(?:\.\d+)?/)
+            const firstVersion = firstVersionMatch ? firstVersionMatch[0] : null
             newVersion = currentVersionInFile.replace(/\d+\.\d+(?:\.\d+)?/g, (match) => {
-              // Replace first occurrence with new version, keep others as is for upper bounds
-              return match === currentVersionInFile.match(/\d+\.\d+(?:\.\d+)?/)?.[0] ? update.newVersion : match
+              return firstVersion !== null && match === firstVersion ? update.newVersion : match
             })
           }
           else {
@@ -253,10 +257,10 @@ export async function generateComposerUpdates(updates: Array<{ name: string, new
           // and just update the version numbers
           let newVersion: string
           if (currentVersionInFile.includes(',')) {
-            // Complex constraint - update version numbers while preserving structure
+            const firstVersionMatch = currentVersionInFile.match(/\d+\.\d+(?:\.\d+)?/)
+            const firstVersion = firstVersionMatch ? firstVersionMatch[0] : null
             newVersion = currentVersionInFile.replace(/\d+\.\d+(?:\.\d+)?/g, (match) => {
-              // Replace first occurrence with new version, keep others as is for upper bounds
-              return match === currentVersionInFile.match(/\d+\.\d+(?:\.\d+)?/)?.[0] ? update.newVersion : match
+              return firstVersion !== null && match === firstVersion ? update.newVersion : match
             })
           }
           else {
@@ -276,7 +280,7 @@ export async function generateComposerUpdates(updates: Array<{ name: string, new
         }
 
         if (!packageFound) {
-          console.warn(`Package ${update.name} not found in ${filePath}`)
+          getDefaultLogger().warn(`Package ${update.name} not found in ${filePath}`)
         }
       }
 
@@ -287,7 +291,7 @@ export async function generateComposerUpdates(updates: Array<{ name: string, new
       })
     }
     catch (error) {
-      console.error(`Failed to update ${filePath}:`, error)
+      getDefaultLogger().error(`Failed to update ${filePath}:`, error)
     }
   }
 

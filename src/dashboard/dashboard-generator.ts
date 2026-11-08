@@ -1,4 +1,13 @@
-import type { DashboardData, DeprecatedDependency, PackageFile, PullRequest } from '../types'
+import type { Drift } from '../scanner/resolution-drift'
+import type { DashboardData, DeprecatedDependency, PackageFile, PullRequest, VulnerableDependency } from '../types'
+
+/** Badge per advisory severity, matching the PR body rendering. */
+const SEVERITY_BADGE: Record<string, string> = {
+  critical: '🔴 Critical',
+  high: '🟠 High',
+  moderate: '🟡 Moderate',
+  low: '⚪ Low',
+}
 
 export class DashboardGenerator {
   /**
@@ -8,12 +17,21 @@ export class DashboardGenerator {
     showOpenPRs?: boolean
     showDetectedDependencies?: boolean
     showDeprecatedDependencies?: boolean
+    showVulnerableDependencies?: boolean
+    /** Per-ecosystem toggles within the detected-dependencies section */
+    includePackageJson?: boolean
+    includeDependencyFiles?: boolean
+    includeGitHubActions?: boolean
     bodyTemplate?: string
   } = {}): { title: string, body: string } {
     const {
       showOpenPRs = true,
       showDetectedDependencies = true,
       showDeprecatedDependencies = true,
+      showVulnerableDependencies = true,
+      includePackageJson = true,
+      includeDependencyFiles = true,
+      includeGitHubActions = true,
       bodyTemplate,
     } = options
 
@@ -28,7 +46,13 @@ export class DashboardGenerator {
 
     let body = this.generateDefaultHeader(data)
 
-    // Show deprecated dependencies warning first (like Renovate)
+    // Vulnerabilities outrank everything else on the dashboard — they are the
+    // one item a maintainer may need to act on today.
+    if (showVulnerableDependencies && data.vulnerableDependencies && data.vulnerableDependencies.length > 0) {
+      body += this.generateVulnerableDependenciesSection(data.vulnerableDependencies)
+    }
+
+    // Show deprecated dependencies warning next (like Renovate)
     if (showDeprecatedDependencies && data.deprecatedDependencies && data.deprecatedDependencies.length > 0) {
       body += this.generateDeprecatedDependenciesSection(data.deprecatedDependencies)
     }
@@ -37,8 +61,20 @@ export class DashboardGenerator {
       body += this.generateOpenPRsSection(data.openPRs)
     }
 
+    // Capped packages come after the open PRs: unlike everything above them,
+    // no pull request here can fix one.
+    if (data.cappedDependencies && data.cappedDependencies.length > 0) {
+      body += this.generateCappedDependenciesSection(data.cappedDependencies)
+    }
+
     if (showDetectedDependencies) {
-      body += this.generateDetectedDependenciesSection(data.detectedDependencies)
+      // The three `include*` toggles were declared, documented in the defaults
+      // table, and read by nothing — every ecosystem was always listed.
+      body += this.generateDetectedDependenciesSection({
+        packageJson: includePackageJson ? data.detectedDependencies.packageJson : [],
+        dependencyFiles: includeDependencyFiles ? data.detectedDependencies.dependencyFiles : [],
+        githubActions: includeGitHubActions ? data.detectedDependencies.githubActions : [],
+      })
     }
 
     body += this.generateFooter()
@@ -52,9 +88,66 @@ export class DashboardGenerator {
   private generateDefaultHeader(_data: DashboardData): string {
     // const portalUrl = `https://developer.mend.io/github/${data.repository.owner}/${data.repository.name}`
 
-    return `This issue lists Buddy Bot updates and detected dependencies. Read the [Dependency Dashboard](https://buddy-bot.sh/features/dependency-dashboard) docs to learn more.
+    return `This issue lists Buddy updates and detected dependencies. Read the [Dependency Dashboard](https://buddy.sh/features/dependency-dashboard) docs to learn more.
 
 `
+  }
+
+  /**
+   * Sanitize text to prevent GitHub from creating issue/PR reference links
+   * that could trigger notifications
+   */
+  private sanitizeReferences(text: string): string {
+    // Wrap standalone #123 references in backticks to prevent GitHub linking
+    return text.replace(/(?<![`\w])#(\d+)(?!\d)/g, '`#$1`')
+  }
+
+  /**
+   * Convert `pr.url` to a relative pull link ONLY if it really is a github.com
+   * PR URL whose path looks like `/owner/repo/pull/<number>`. Returns null for
+   * anything else so the caller can fall back to the raw URL safely.
+   */
+  private toRelativePrUrl(url: string, prNumber: number): string | null {
+    try {
+      const parsed = new URL(url)
+      if (parsed.hostname !== 'github.com')
+        return null
+      // Path must end with /pull/<prNumber> for some owner/repo pair
+      const match = parsed.pathname.match(/^\/[^/]+\/[^/]+\/pull\/(\d+)$/)
+      if (!match || Number(match[1]) !== prNumber)
+        return null
+      return `../pull/${prNumber}`
+    }
+    catch {
+      return null
+    }
+  }
+
+  /**
+   * Generate the capped dependencies section.
+   *
+   * These packages are already at the newest version every declared range
+   * allows, so they are listed with the declaration responsible rather than
+   * offered as an update.
+   */
+  private generateCappedDependenciesSection(capped: Drift[]): string {
+    let section = `## Capped dependencies
+
+The following packages are held below their latest version by a range declared elsewhere in the dependency tree. Updating this repository cannot move them — the constraint has to be widened where it is declared.
+
+| Package | Installed | Reachable | Latest | Capped by |
+|---|---|---|---|---|
+`
+
+    for (const drift of capped) {
+      const cappedBy = drift.capping
+        .map(declaration => `\`${this.sanitizeReferences(declaration.by)}\` (\`${declaration.range}\`)`)
+        .join(', ')
+
+      section += `| \`${this.sanitizeReferences(drift.name)}\` | \`${drift.installed}\` | \`${drift.reachable}\` | \`${drift.latest}\` | ${cappedBy} |\n`
+    }
+
+    return `${section}\n`
   }
 
   /**
@@ -70,14 +163,22 @@ The following updates have all been created. To force a retry/rebase of any, cli
     for (const pr of openPRs) {
       // Extract package names from PR title or body if possible
       const packageInfo = this.extractPackageInfo(pr)
-      const rebaseBranch = pr.head
 
-      // Convert full GitHub URL to relative format
-      const relativeUrl = pr.url.includes('/pull/') && pr.url.includes('github.com')
-        ? `../pull/${pr.number}`
-        : pr.url
+      // Sanitize branch name before embedding in an HTML comment. git allows a
+      // lot of characters in refs; `-->` would close the comment and let the
+      // rest of the branch name render as markdown/HTML. Valid ref characters
+      // never include `<`, `>`, or whitespace, so stripping these is safe.
+      const rebaseBranch = pr.head.replace(/[<>\s]|-->/g, '')
 
-      section += ` - [ ] <!-- rebase-branch=${rebaseBranch} -->[${pr.title}](${relativeUrl})`
+      // Build the relative URL only when pr.url is a real github.com PR link
+      // for THIS repo. A simple `.includes()` check accepts attacker-controlled
+      // URLs that happen to contain the substring (e.g. `?x=github.com/pull/1`).
+      const relativeUrl = this.toRelativePrUrl(pr.url, pr.number) ?? pr.url
+
+      // Sanitize PR title to prevent #123 references from creating links/notifications
+      const sanitizedTitle = this.sanitizeReferences(pr.title)
+
+      section += ` - [ ] <!-- rebase-branch=${rebaseBranch} -->[${sanitizedTitle}](${relativeUrl})`
 
       // Show clean package names like Renovate does (without version info)
       if (packageInfo.length > 0) {
@@ -308,6 +409,34 @@ The following updates have all been created. To force a retry/rebase of any, cli
   }
 
   /**
+   * Generate the vulnerable dependencies section.
+   *
+   * Rendered above everything else so a maintainer opening the dashboard sees
+   * outstanding advisories before any routine version bump.
+   */
+  private generateVulnerableDependenciesSection(vulnerable: VulnerableDependency[]): string {
+    const total = vulnerable.reduce((sum, entry) => sum + entry.advisories.length, 0)
+
+    let section = `> [!CAUTION]
+> ${total} known ${total === 1 ? 'vulnerability affects' : 'vulnerabilities affect'} ${vulnerable.length} ${vulnerable.length === 1 ? 'dependency' : 'dependencies'} in this repository.
+
+| Severity | Package | Current | Advisory | Fixed in |
+|----------|---------|---------|----------|----------|
+`
+
+    for (const entry of vulnerable) {
+      for (const advisory of entry.advisories) {
+        const badge = SEVERITY_BADGE[advisory.severity] ?? advisory.severity
+        const link = advisory.url ? `[${advisory.id}](${advisory.url})` : advisory.id
+        section += `| ${badge} | \`${entry.name}\` | \`${entry.currentVersion}\` | ${link} | \`${advisory.fixedVersion ?? 'n/a'}\` |\n`
+      }
+    }
+
+    section += '\n'
+    return section
+  }
+
+  /**
    * Generate the deprecated dependencies section
    */
   private generateDeprecatedDependenciesSection(deprecatedDependencies: DeprecatedDependency[]): string {
@@ -336,7 +465,7 @@ The following updates have all been created. To force a retry/rebase of any, cli
   private generateFooter(): string {
     return `---
 
-- [ ] <!-- manual job -->Check this box to trigger a request for Buddy Bot to run again on this repository
+- [ ] <!-- manual job -->Check this box to trigger a request for Buddy to run again on this repository
 `
   }
 
@@ -442,7 +571,7 @@ The following updates have all been created. To force a retry/rebase of any, cli
 
     // Pattern 3: Extract from PR body - look for package names in backticks (avoid table content)
     // This handles cases where the title doesn't contain specific package names
-    // but the body lists them like: `@types/bun`, `cac`, `ts-pkgx`
+    // but the body lists them like: `@types/bun`, `cac`, `ts-pantry`
     if (packages.length < 3) { // Allow backtick extraction to supplement table extraction
       const bodyMatches = pr.body.match(/`([^`]+)`/g)
       if (bodyMatches) {
@@ -479,7 +608,7 @@ The following updates have all been created. To force a retry/rebase of any, cli
           // Must match one of these patterns for valid package names:
               packageName.startsWith('@') // Scoped packages like @types/node
               || packageName.includes('/') // GitHub actions like actions/checkout
-              || packageName.match(/^[a-z][a-z0-9.-]*$/i) // Simple package names like lodash, ts-pkgx, bun.com
+              || packageName.match(/^[a-z][a-z0-9.-]*$/i) // Simple package names like lodash, ts-pantry, bun.com
             )) {
             packages.push(packageName)
           }

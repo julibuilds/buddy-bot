@@ -1,18 +1,19 @@
 # Migrating from Dependabot
 
-This guide provides detailed instructions for migrating from GitHub's Dependabot to Buddy Bot, including configuration conversion and enhanced features.
+This guide provides detailed instructions for migrating from GitHub's Dependabot to Buddy, including configuration conversion and enhanced features.
 
 ## Automated Migration
 
-Buddy Bot can automatically detect and migrate Dependabot configurations:
+Buddy can automatically detect and migrate Dependabot configurations:
 
 ```bash
-buddy-bot setup
+buddy setup
 ```
 
 The migration process will:
+
 - 🔍 Detect `.github/dependabot.yml` or `.github/dependabot.yaml`
-- ⚙️ Convert basic settings to Buddy Bot format
+- ⚙️ Convert basic settings to Buddy format
 - ⚠️ Identify configuration gaps (Dependabot is limited)
 - 📋 Suggest enhancements and optimizations
 
@@ -20,7 +21,7 @@ The migration process will:
 
 ### Basic Settings
 
-| Dependabot Setting | Buddy Bot Equivalent | Notes |
+| Dependabot Setting | Buddy Equivalent | Notes |
 |-------------------|---------------------|-------|
 | `package-ecosystem` | Detected automatically | npm, composer, github-actions |
 | `directory` | `packages.paths` | File path configuration |
@@ -36,7 +37,7 @@ The migration process will:
 
 **Dependabot Intervals → Cron:**
 
-| Dependabot | Buddy Bot Cron | Description |
+| Dependabot | Buddy Cron | Description |
 |------------|---------------|-------------|
 | `daily` | `0 2 * * *` | Daily at 2 AM |
 | `weekly` | `0 2 * * 1` | Monday at 2 AM |
@@ -50,15 +51,15 @@ schedule:
   interval: "weekly"
   day: "monday"
   time: "04:00"
-  timezone: "America/New_York"
+  timezone: "America/New*York"
 ```
 
 ```typescript
-// Buddy Bot
+// Buddy
 {
   schedule: {
     cron: '0 4 * * 1', // Monday 4 AM
-    timezone: 'America/New_York'
+    timezone: 'America/New*York'
   }
 }
 ```
@@ -71,16 +72,20 @@ schedule:
 ```yaml
 version: 2
 updates:
+
   - package-ecosystem: "npm"
+
     directory: "/"
     schedule:
       interval: "weekly"
     ignore:
+
       - dependency-name: "react"
       - dependency-name: "typescript"
+
 ```
 
-**After (Buddy Bot):**
+**After (Buddy):**
 ```typescript
 export default {
   schedule: {
@@ -91,7 +96,7 @@ export default {
     strategy: 'all',
     ignore: ['react', 'typescript']
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### Multi-Ecosystem Configuration
@@ -100,38 +105,52 @@ export default {
 ```yaml
 version: 2
 updates:
+
   - package-ecosystem: "npm"
+
     directory: "/"
     schedule:
       interval: "daily"
     assignees:
+
       - "frontend-team"
+
     labels:
+
       - "npm"
       - "dependencies"
 
   - package-ecosystem: "composer"
+
     directory: "/"
     schedule:
       interval: "weekly"
     assignees:
+
       - "backend-team"
+
     labels:
+
       - "composer"
       - "dependencies"
 
   - package-ecosystem: "github-actions"
+
     directory: "/"
     schedule:
       interval: "monthly"
     assignees:
+
       - "devops-team"
+
     labels:
+
       - "github-actions"
       - "dependencies"
+
 ```
 
-**After (Buddy Bot):**
+**After (Buddy):**
 ```typescript
 export default {
   schedule: {
@@ -140,40 +159,30 @@ export default {
   },
   packages: {
     strategy: 'all',
-    groups: [
+    rules: [
       {
-        name: 'npm packages',
-        patterns: ['*'],
-        files: ['package.json'],
-        updateType: 'all',
+        matchEcosystems: ['npm'],
+        groupName: 'npm packages',
         assignees: ['frontend-team'],
         labels: ['npm', 'dependencies']
       },
       {
-        name: 'Composer packages',
-        patterns: ['*'],
-        files: ['composer.json'],
-        updateType: 'all',
-        schedule: {
-          cron: '0 2 * * 1' // Weekly override
-        },
+        matchEcosystems: ['composer'],
+        groupName: 'Composer packages',
+        schedule: '0 2 * * 1', // Only proposed on a Monday run
         assignees: ['backend-team'],
         labels: ['composer', 'dependencies']
       },
       {
-        name: 'GitHub Actions',
-        patterns: ['*'],
-        files: ['.github/workflows/*.yml'],
-        updateType: 'all',
-        schedule: {
-          cron: '0 2 1 * *' // Monthly override
-        },
+        matchEcosystems: ['github-actions'],
+        groupName: 'GitHub Actions',
+        schedule: '0 2 1 * *', // Only proposed on a first-of-month run
         assignees: ['devops-team'],
         labels: ['github-actions', 'dependencies']
       }
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### Advanced Configuration with Ignores
@@ -182,28 +191,40 @@ export default {
 ```yaml
 version: 2
 updates:
+
   - package-ecosystem: "npm"
+
     directory: "/"
     schedule:
       interval: "daily"
       time: "06:00"
       timezone: "Europe/London"
     ignore:
+
       - dependency-name: "react"
+
         versions: [">=17.0.0"]
+
       - dependency-name: "@types/*"
       - dependency-name: "eslint"
+
         update-types: ["version-update:semver-major"]
     assignees:
+
       - "maintainer"
+
     reviewers:
+
       - "security-team"
+
     labels:
+
       - "dependencies"
       - "automerge"
+
 ```
 
-**After (Buddy Bot):**
+**After (Buddy):**
 ```typescript
 export default {
   schedule: {
@@ -216,17 +237,16 @@ export default {
       'react', // Ignore react entirely
       '@types/*', // Ignore all @types packages
     ],
-    groups: [
+    rules: [
       {
-        name: 'ESLint Updates',
-        packages: ['eslint'],
-        updateType: 'minor', // Only minor/patch for eslint
+        matchPackages: ['eslint'],
+        groupName: 'ESLint Updates',
+        strategy: 'minor', // Only minor/patch for eslint
         autoMerge: false
       },
       {
-        name: 'Auto-merge Updates',
-        patterns: ['*'],
-        updateType: 'patch',
+        matchUpdateTypes: ['patch'],
+        groupName: 'Auto-merge Updates',
         autoMerge: true,
         labels: ['dependencies', 'automerge']
       }
@@ -237,12 +257,12 @@ export default {
     reviewers: ['security-team'],
     labels: ['dependencies']
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ## Enhanced Features
 
-Buddy Bot provides several features not available in Dependabot:
+Buddy provides several features not available in Dependabot:
 
 ### Dependency Dashboard
 
@@ -256,7 +276,7 @@ export default {
     includeGitHubActions: true,
     labels: ['dependencies', 'dashboard']
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### Smart Grouping
@@ -264,29 +284,26 @@ export default {
 ```typescript
 export default {
   packages: {
-    groups: [
+    rules: [
       {
-        name: 'React Ecosystem',
-        patterns: ['react', 'react-*', '@types/react*'],
-        updateType: 'minor'
+        matchPackages: ['react', 'react-*', '@types/react*'],
+        groupName: 'React Ecosystem',
+        strategy: 'minor'
       },
       {
-        name: 'TypeScript Definitions',
-        patterns: ['^@types/'],
-        updateType: 'all',
+        matchPackages: ['@types/*'],
+        groupName: 'TypeScript Definitions',
         autoMerge: true
       },
       {
-        name: 'Development Tools',
-        patterns: ['eslint*', 'prettier', '@typescript-eslint/*'],
-        updateType: 'minor',
-        schedule: {
-          cron: '0 2 * * 1' // Weekly for dev tools
-        }
+        matchPackages: ['eslint*', 'prettier', '@typescript-eslint/*'],
+        groupName: 'Development Tools',
+        strategy: 'minor',
+        schedule: '0 2 * * 1' // Only proposed on a Monday run
       }
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### Auto-merge Configuration
@@ -297,30 +314,25 @@ export default {
     autoMerge: {
       enabled: true,
       strategy: 'squash',
-      conditions: [
-        'status-success',
-        'no-conflicts',
-        'approved-by-reviewers'
-      ]
+      conditions: ['patch-only'],
+      requireGreenCI: true
     }
   },
   packages: {
-    groups: [
+    rules: [
       {
-        name: 'Safe Updates',
-        patterns: ['*'],
-        updateType: 'patch',
+        matchUpdateTypes: ['patch'],
+        groupName: 'Safe Updates',
         autoMerge: true
       },
       {
-        name: 'Manual Review',
-        patterns: ['*'],
-        updateType: 'major',
+        matchUpdateTypes: ['major'],
+        groupName: 'Manual Review',
         autoMerge: false
       }
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ## Migration Process
@@ -338,34 +350,34 @@ Add this to your Dependabot config to disable it temporarily:
 ```yaml
 version: 2
 updates: []
-# Temporarily disabled for Buddy Bot migration
+# Temporarily disabled for Buddy migration
 ```
 
-### 3. Run Buddy Bot Setup
+### 3. Run Buddy Setup
 
 ```bash
-buddy-bot setup
+buddy setup
 ```
 
 ### 4. Test Configuration
 
 ```bash
 # Scan for updates
-buddy-bot scan --verbose
+buddy scan --verbose
 
 # Test update process
-buddy-bot update --dry-run
+buddy update --dry-run
 
 # Create dashboard
-buddy-bot dashboard
+buddy dashboard
 ```
 
 ### 5. Validate Workflows
 
 Check generated GitHub Actions:
-- `.github/workflows/buddy-dashboard.yml`
-- `.github/workflows/buddy-check.yml`
-- `.github/workflows/buddy-update.yml`
+
+- `.github/workflows/buddy.yml` — the unified workflow: rebase checks, dependency updates and the dashboard
+- `.github/workflows/buddy-security.yml` — the security audit, kept separate so it triggers on its own path filters
 
 ### 6. Monitor and Adjust
 
@@ -374,9 +386,9 @@ Check generated GitHub Actions:
 3. **Week 3**: Enable auto-merge for trusted updates
 4. **Week 4**: Remove Dependabot configuration
 
-## Comparison: Dependabot vs Buddy Bot
+## Comparison: Dependabot vs Buddy
 
-| Feature | Dependabot | Buddy Bot |
+| Feature | Dependabot | Buddy |
 |---------|------------|-----------|
 | **Package Managers** | 10+ ecosystems | npm, Composer, GitHub Actions |
 | **Scheduling** | Basic intervals | Full cron expressions |
@@ -391,6 +403,7 @@ Check generated GitHub Actions:
 ## Advantages of Migration
 
 ### ✅ Better Features
+
 - **Rich Dashboard**: Visual dependency overview
 - **Smart Grouping**: Advanced pattern-based grouping
 - **Flexible Scheduling**: Full cron expression support
@@ -398,12 +411,14 @@ Check generated GitHub Actions:
 - **Workflow Integration**: Native GitHub Actions
 
 ### ✅ Better Control
+
 - **Granular Configuration**: Per-group settings
 - **Conditional Auto-merge**: Rule-based merging
 - **Custom Templates**: PR title/body customization
 - **Advanced Filtering**: Complex ignore patterns
 
 ### ✅ Better Visibility
+
 - **Centralized Dashboard**: All dependencies in one place
 - **Update Analytics**: Track update patterns
 - **PR Management**: Enhanced PR lifecycle
@@ -415,19 +430,19 @@ Check generated GitHub Actions:
 
 **Limited ecosystem support:**
 ```
-Buddy Bot focuses on the most common package managers.
+Buddy focuses on the most common package managers.
 For other ecosystems, consider keeping Dependabot for those specific paths.
 ```
 
 **Complex ignore patterns:**
 ```yaml
 # Dependabot supports complex ignore patterns
-# Simplify to basic package names in Buddy Bot
+# Simplify to basic package names in Buddy
 ```
 
 **Version-specific ignores:**
 ```
-Buddy Bot uses package-level ignores rather than version-specific.
+Buddy uses package-level ignores rather than version-specific.
 Use pinning for version-specific control.
 ```
 
@@ -439,29 +454,34 @@ You can run both tools for different ecosystems:
 # .github/dependabot.yml (for unsupported ecosystems)
 version: 2
 updates:
+
   - package-ecosystem: "docker"
+
     directory: "/"
     schedule:
       interval: "weekly"
+
   - package-ecosystem: "terraform"
+
     directory: "/infrastructure"
     schedule:
       interval: "weekly"
 ```
 
 ```typescript
-// buddy-bot.config.ts (for supported ecosystems)
+// buddy.config.ts (for supported ecosystems)
 export default {
   packages: {
     strategy: 'all'
     // npm, composer, github-actions handled here
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ## Best Practices
 
 ### ✅ Do
+
 - Start with automated migration
 - Test thoroughly with dry runs
 - Use dashboard for visibility
@@ -469,10 +489,11 @@ export default {
 - Configure auto-merge gradually
 
 ### ❌ Don't
+
 - Remove Dependabot immediately
 - Over-complicate initial setup
 - Ignore migration warnings
 - Skip workflow validation
 - Forget to monitor first weeks
 
-The migration from Dependabot to Buddy Bot offers enhanced features and better control, while maintaining the reliability you expect from automated dependency updates.
+The migration from Dependabot to Buddy offers enhanced features and better control, while maintaining the reliability you expect from automated dependency updates.

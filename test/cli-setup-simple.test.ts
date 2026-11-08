@@ -6,12 +6,16 @@ describe('CLI Setup - Enhanced Functions', () => {
       const { generateUnifiedWorkflow } = await import('../src/setup')
       const workflow = generateUnifiedWorkflow(true)
 
-      expect(workflow).toContain('name: Buddy Bot')
-      expect(workflow).toContain('cron: \'15 */2 * * *\'') // Updated dashboard schedule
-      expect(workflow).toContain('BUDDY_BOT_TOKEN || secrets.GITHUB_TOKEN')
-      expect(workflow).toContain('bunx buddy-bot dashboard')
-      expect(workflow).toContain('bunx buddy-bot update-check')
-      expect(workflow).toContain('bunx buddy-bot update')
+      expect(workflow).toContain('name: Buddy')
+      expect(workflow).toContain('cron: \'0 9 * * 1,3,5\'') // Standard preset schedule
+      // GITHUB_TOKEN is the built-in token; BUDDY_TOKEN is passed separately for workflow file permissions
+      // eslint-disable-next-line no-template-curly-in-string
+      expect(workflow).toContain('GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}')
+      // eslint-disable-next-line no-template-curly-in-string
+      expect(workflow).toContain('BUDDY_TOKEN: ${{ secrets.BUDDY_TOKEN }}')
+      expect(workflow).toContain('bunx @buddysh/buddy dashboard')
+      expect(workflow).toContain('bunx @buddysh/buddy update-check')
+      expect(workflow).toContain('bunx @buddysh/buddy update')
       expect(workflow).toContain('workflow_dispatch')
     })
 
@@ -19,11 +23,11 @@ describe('CLI Setup - Enhanced Functions', () => {
       const { generateUnifiedWorkflow } = await import('../src/setup')
       const workflow = generateUnifiedWorkflow(false)
 
-      expect(workflow).toContain('name: Buddy Bot')
+      expect(workflow).toContain('name: Buddy')
       // eslint-disable-next-line no-template-curly-in-string
       expect(workflow).toContain('${{ secrets.GITHUB_TOKEN }}')
-      // Should not use BUDDY_BOT_TOKEN in the actual token environment variable
-      expect(workflow).not.toContain('secrets.BUDDY_BOT_TOKEN ||')
+      // Should not use BUDDY_TOKEN in the actual token environment variable
+      expect(workflow).not.toContain('secrets.BUDDY_TOKEN ||')
     })
 
     it('should include all three job types in unified workflow', async () => {
@@ -33,12 +37,12 @@ describe('CLI Setup - Enhanced Functions', () => {
       expect(workflow).toContain('check:')
       expect(workflow).toContain('dependency-update:')
       expect(workflow).toContain('dashboard-update:')
-      expect(workflow).toContain('cron: \'*/1 * * * *\'') // Check every minute
-      expect(workflow).toContain('cron: \'0 */2 * * *\'') // Update every 2 hours
-      expect(workflow).toContain('cron: \'15 */2 * * *\'') // Dashboard 15 mins after updates
-      expect(workflow).toContain('bunx buddy-bot update-check')
-      expect(workflow).toContain('bunx buddy-bot update')
-      expect(workflow).toContain('bunx buddy-bot dashboard')
+      expect(workflow).toContain('pull_request:') // Rebase checkbox triggers instantly via PR edit event
+      expect(workflow).toContain('cron: \'0 9 * * 1,3,5\'') // Updates and dashboard
+      expect(workflow).toContain('cron: \'0 4 * * *\'') // Housekeeping, never preset-driven
+      expect(workflow).toContain('bunx @buddysh/buddy update-check')
+      expect(workflow).toContain('bunx @buddysh/buddy update')
+      expect(workflow).toContain('bunx @buddysh/buddy dashboard')
       expect(workflow).toContain('dry_run:')
     })
   })
@@ -65,8 +69,8 @@ describe('CLI Setup - Enhanced Functions', () => {
 
       const workflow = generateUnifiedWorkflow(false)
 
-      expect(workflow).toContain('name: Buddy Bot')
-      expect(workflow).toContain('cron: \'0 */2 * * *\'')
+      expect(workflow).toContain('name: Buddy')
+      expect(workflow).toContain('cron: \'0 9 * * 1,3,5\'')
       expect(workflow).toContain('default: false') // dry_run default
       expect(workflow).toContain('dependency-update:') // job name
       expect(workflow).toContain('determine-jobs:') // job coordination

@@ -1,24 +1,69 @@
-/* eslint-disable no-console */
 import type { PackageInfo, ReleaseNote } from '../services/release-notes-fetcher'
-import type { BuddyBotConfig, PullRequest, UpdateGroup } from '../types'
+import type { BuddyConfig, PullRequest, UpdateGroup } from '../types'
+import type { Logger } from '../utils/logger'
 import process from 'node:process'
 import { ReleaseNotesFetcher } from '../services/release-notes-fetcher'
+import { getGitHubServerUrl } from '../utils/endpoints'
+import { getUpdateType } from '../utils/helpers'
+import { getDefaultLogger } from '../utils/logger'
+import { formatSecurityAdvisorySection } from '../utils/security-format'
+import { serializeGroupManifest } from './pr-manifest'
+import { applyTemplate, templateTokensForGroup } from './templates'
 
 export class PullRequestGenerator {
   private releaseNotesFetcher = new ReleaseNotesFetcher()
   private verbose = false
+  private readonly logger: Logger
 
-  constructor(private readonly config?: BuddyBotConfig | undefined) {
+  constructor(
+    private readonly config?: BuddyConfig | undefined,
+    /** Logger to use; defaults to the process-wide default. */
+    logger?: Logger,
+  ) {
     // Enable verbose logging via config or environment variable
-    this.verbose = config?.verbose || process.env.BUDDY_BOT_VERBOSE === 'true'
+    this.verbose = config?.verbose || process.env.BUDDY_VERBOSE === 'true'
+    this.logger = logger ?? getDefaultLogger()
+  }
+
+  /**
+   * Resolved release-notes settings, with documented defaults applied.
+   */
+  private get releaseNotesSettings(): {
+    enabled: boolean
+    maxReleases: number
+    maxBodyLength: number
+    includeCompareLinks: boolean
+  } {
+    const releaseNotes = this.config?.releaseNotes
+    return {
+      enabled: releaseNotes?.enabled ?? true,
+      maxReleases: releaseNotes?.maxReleases ?? 3,
+      maxBodyLength: releaseNotes?.maxBodyLength ?? 1000,
+      includeCompareLinks: releaseNotes?.includeCompareLinks ?? true,
+    }
+  }
+
+  /**
+   * Build a web link to a file in the repository under review.
+   *
+   * Uses the configured server rather than a hardcoded github.com so file
+   * links in a GitHub Enterprise Server PR resolve against that instance.
+   *
+   * @param filePath - Repository-relative path
+   * @returns Absolute blob URL on the configured base branch
+   */
+  private repositoryFileUrl(filePath: string): string {
+    const server = getGitHubServerUrl(this.config)
+    const { owner, name, baseBranch } = this.config?.repository ?? {}
+    return `${server}/${owner}/${name}/blob/${baseBranch || 'main'}/${filePath}`
   }
 
   private log(message: string, data?: any) {
     if (this.verbose) {
       const timestamp = new Date().toISOString()
-      console.log(`[${timestamp}] PR-GEN: ${message}`)
+      this.logger.info(`[${timestamp}] PR-GEN: ${message}`)
       if (data) {
-        console.log(JSON.stringify(data, null, 2))
+        this.logger.info(JSON.stringify(data, null, 2))
       }
     }
   }
@@ -83,6 +128,10 @@ export class PullRequestGenerator {
       u.file.endsWith('composer.json') || u.file.endsWith('composer.lock'),
     ).length
 
+    const zigCount = group.updates.filter(u =>
+      u.file.endsWith('build.zig.zon'),
+    ).length
+
     const systemCount = group.updates.filter(u =>
       (u.file.includes('.yaml') || u.file.includes('.yml')) && !u.file.includes('.github/workflows/'),
     ).length
@@ -96,6 +145,8 @@ export class PullRequestGenerator {
       labels.push('npm')
     if (composerCount > 0)
       labels.push('composer')
+    if (zigCount > 0)
+      labels.push('zig')
     if (systemCount > 0)
       labels.push('system')
     if (actionsCount > 0)
@@ -107,6 +158,12 @@ export class PullRequestGenerator {
       labels.push(update.name)
     }
 
+    // The docs have promised `bulk-update` on PRs carrying five or more
+    // updates since before anything applied it; a filter watching for the
+    // label saw grouped PRs slip past unlabelled.
+    if (group.updates.length >= 5)
+      labels.push('bulk-update')
+
     return labels
   }
 
@@ -114,6 +171,19 @@ export class PullRequestGenerator {
    * Generate PR title for an update group
    */
   generateTitle(group: UpdateGroup): string {
+    const template = this.config?.pullRequest?.titleFormat
+    if (template) {
+      return applyTemplate(
+        template,
+        templateTokensForGroup(group, { title: this.defaultTitle(group) }, this.config?.packages?.strategy),
+      )
+    }
+
+    return this.defaultTitle(group)
+  }
+
+  /** The built-in title, also exposed to templates as `{title}`. */
+  private defaultTitle(group: UpdateGroup): string {
     if (group.updates.length === 1) {
       const update = group.updates[0]
       return `chore(deps): update dependency ${update.name} to v${update.newVersion}`
@@ -170,6 +240,9 @@ export class PullRequestGenerator {
     const composerCount = group.updates.filter(u =>
       u.file.endsWith('composer.json') || u.file.endsWith('composer.lock'),
     ).length
+    const zigCount = group.updates.filter(u =>
+      u.file.endsWith('build.zig.zon'),
+    ).length
 
     this.log('📊 Package type counts', {
       packageJsonCount,
@@ -195,6 +268,11 @@ export class PullRequestGenerator {
 
     let body = `This PR contains the following updates:\n\n`
 
+    // Vulnerability details lead the body — a reviewer deciding how urgently to
+    // merge should not have to scroll past version tables to learn the PR
+    // closes an advisory.
+    body += formatSecurityAdvisorySection(group.updates)
+
     // Only show summary table for multi-package updates
     const isMultiPackageUpdate = group.updates.length > 1
     if (isMultiPackageUpdate) {
@@ -209,6 +287,8 @@ export class PullRequestGenerator {
         body += `| 🚀 GitHub Actions | ${githubActionsCount} |\n`
       if (composerCount > 0)
         body += `| 🐘 Composer Packages | ${composerCount} |\n`
+      if (zigCount > 0)
+        body += `| ⚡ Zig Packages | ${zigCount} |\n`
       body += `| **Total** | **${group.updates.length}** |\n\n`
     }
 
@@ -218,6 +298,9 @@ export class PullRequestGenerator {
     )
     const composerUpdates = group.updates.filter(update =>
       update.file.endsWith('composer.json') || update.file.endsWith('composer.lock'),
+    )
+    const zigUpdates = group.updates.filter(update =>
+      update.file.endsWith('build.zig.zon'),
     )
     const dependencyFileUpdates = group.updates.filter(update =>
       update.file.includes('.yaml') || update.file.includes('.yml'),
@@ -245,30 +328,36 @@ export class PullRequestGenerator {
       },
     })
 
-    // Deduplicate GitHub Actions updates by name (multiple files may reference same action)
-    const uniqueGithubActionsUpdates = githubActionsUpdates.reduce((acc, update) => {
-      const existing = acc.find(u => u.name === update.name && u.currentVersion === update.currentVersion && u.newVersion === update.newVersion)
-      if (!existing) {
-        // Create consolidated update with unique files only
-        const allFilesForAction = [...new Set(githubActionsUpdates
-          .filter(u => u.name === update.name && u.currentVersion === update.currentVersion && u.newVersion === update.newVersion)
-          .map(u => u.file))]
-        acc.push({
-          ...update,
-          file: allFilesForAction.join(', '), // Combine all unique affected files
-        })
+    // Deduplicate GitHub Actions updates by (name, currentVersion, newVersion).
+    // Multiple workflow files may reference the same action — group them so the
+    // PR table shows one row with all affected files joined.
+    // Single pass O(n): group by key, then materialize.
+    const actionGroups = new Map<string, { update: typeof githubActionsUpdates[number], files: Set<string> }>()
+    for (const update of githubActionsUpdates) {
+      const key = `${update.name}@${update.currentVersion}=>${update.newVersion}`
+      const group = actionGroups.get(key)
+      if (group) {
+        group.files.add(update.file)
       }
-      return acc
-    }, [] as typeof githubActionsUpdates)
+      else {
+        actionGroups.set(key, { update, files: new Set([update.file]) })
+      }
+    }
+    const uniqueGithubActionsUpdates = Array.from(actionGroups.values()).map(({ update, files }) => ({
+      ...update,
+      file: Array.from(files).join(', '),
+    }))
 
-    // Deduplicate Composer updates by name and version (similar to GitHub Actions)
-    const uniqueComposerUpdates = composerUpdates.reduce((acc, update) => {
-      const existing = acc.find(u => u.name === update.name && u.currentVersion === update.currentVersion && u.newVersion === update.newVersion)
-      if (!existing) {
-        acc.push(update)
+    // Deduplicate Composer updates by (name, currentVersion, newVersion). O(n).
+    const composerSeen = new Set<string>()
+    const uniqueComposerUpdates: typeof composerUpdates = []
+    for (const update of composerUpdates) {
+      const key = `${update.name}@${update.currentVersion}=>${update.newVersion}`
+      if (!composerSeen.has(key)) {
+        composerSeen.add(key)
+        uniqueComposerUpdates.push(update)
       }
-      return acc
-    }, [] as typeof composerUpdates)
+    }
 
     // Fetch package information for package.json updates only
     const packageInfos = new Map<string, { packageInfo: PackageInfo, releaseNotes: ReleaseNote[], compareUrl?: string }>()
@@ -297,7 +386,14 @@ export class PullRequestGenerator {
       body += `| Package | Change | Age | Adoption | Passing | Confidence |\n`
       body += `|---|---|---|---|---|---|\n`
 
-      for (const update of packageJsonUpdates) {
+      const fetchStartTime = Date.now()
+      this.log(`⏱️  Starting to fetch info for ${packageJsonUpdates.length} npm packages in parallel...`)
+
+      // PARALLEL FETCHING - fetch all packages concurrently. Skipped entirely
+      // when release notes are disabled: on a large group this is the bulk of
+      // the generator's wall time, and none of it would be rendered.
+      const fetchPromises = (this.releaseNotesSettings.enabled ? packageJsonUpdates : []).map(async (update) => {
+        const singleFetchStart = Date.now()
         try {
           // Clean package name (remove dependency type info) before fetching
           const cleanPackageName = update.name.replace(/\s*\(dev\)$/, '').replace(/\s*\(peer\)$/, '').replace(/\s*\(optional\)$/, '')
@@ -307,12 +403,28 @@ export class PullRequestGenerator {
             update.currentVersion,
             update.newVersion,
           )
-          packageInfos.set(update.name, result)
+          this.log(`⏱️  Fetched ${cleanPackageName} in ${Date.now() - singleFetchStart}ms`)
+          return { name: update.name, result }
         }
         catch (error) {
-          console.warn(`Failed to fetch info for ${update.name}:`, error)
+          this.logger.warn(`Failed to fetch info for ${update.name}:`, error)
+          return null
         }
-      }
+      })
+
+      // Wait for all fetches to complete
+      const results = await Promise.all(fetchPromises)
+
+      // Store results in map
+      results.forEach((item) => {
+        if (item) {
+          packageInfos.set(item.name, item.result)
+        }
+      })
+
+      const fetchDuration = Date.now() - fetchStartTime
+      this.log(`⏱️  Total npm package info fetch took ${fetchDuration}ms for ${packageJsonUpdates.length} packages (avg: ${Math.round(fetchDuration / packageJsonUpdates.length)}ms per package)`)
+      this.logger.info(`⏱️  [PR-GEN] npm package info fetch: ${fetchDuration}ms for ${packageJsonUpdates.length} packages (PARALLEL)`)
 
       for (const update of packageJsonUpdates) {
         const packageInfo = packageInfos.get(update.name)
@@ -341,8 +453,10 @@ export class PullRequestGenerator {
         }
 
         // Generate version change with diff link (Renovate style)
-        const diffUrl = `https://renovatebot.com/diffs/npm/${encodeURIComponent(cleanPackageName)}/${update.currentVersion}/${update.newVersion}`
-        const change = `[\`${update.currentVersion}\` -> \`${update.newVersion}\`](${diffUrl})`
+        const diffUrl = `https://renovatebot.com/diffs/npm/${encodeURIComponent(cleanPackageName)}/${encodeURIComponent(update.currentVersion)}/${encodeURIComponent(update.newVersion)}`
+        const currentVersion = this.escapeMarkdownTableValue(update.currentVersion)
+        const newVersion = this.escapeMarkdownTableValue(update.newVersion)
+        const change = `[\`${currentVersion}\` -> \`${newVersion}\`](${diffUrl})`
 
         // Generate confidence badges with clean package name
         const badges = this.releaseNotesFetcher.generatePackageBadges(
@@ -366,7 +480,7 @@ export class PullRequestGenerator {
           composerPackageInfos.set(update.name, packageInfo)
         }
         catch (error) {
-          console.warn(`Failed to fetch Composer info for ${update.name}:`, error)
+          this.logger.warn(`Failed to fetch Composer info for ${update.name}:`, error)
         }
       }
 
@@ -424,6 +538,59 @@ export class PullRequestGenerator {
       body += `\n`
     }
 
+    // Zig dependencies table
+    if (zigUpdates.length > 0) {
+      // Only show section header for multi-package updates or when there are multiple package types
+      if (isMultiPackageUpdate || zigCount < group.updates.length) {
+        body += `## ⚡ Zig Dependencies\n\n`
+      }
+
+      body += `![zig](https://img.shields.io/badge/Zig-F7A41D?style=flat&logo=zig&logoColor=white)\n\n`
+
+      // Only show count text for multi-package updates
+      if (zigUpdates.length > 1) {
+        body += `*${zigUpdates.length} packages will be updated*\n\n`
+      }
+
+      body += `| Package | Change | Type | File |\n`
+      body += `|---|---|---|---|\n`
+
+      for (const update of zigUpdates) {
+        // Generate package link from metadata if available
+        let packageCell: string
+        const metadata = (update as any).metadata
+        if (metadata?.url) {
+          // Extract repository URL from tarball URL
+          const repoMatch = metadata.url.match(/https?:\/\/github\.com\/([^/]+\/[^/]+)/)
+          if (repoMatch) {
+            const repoUrl = `https://github.com/${repoMatch[1]}`
+            packageCell = `[${update.name}](${repoUrl})`
+          }
+          else {
+            packageCell = update.name
+          }
+        }
+        else {
+          packageCell = update.name
+        }
+
+        // Enhanced version change display
+        const updateType = getUpdateType(update.currentVersion, update.newVersion)
+        const typeEmoji = updateType === 'major' ? '🔴' : updateType === 'minor' ? '🟡' : '🟢'
+        const change = this.formatVersionChange(update.currentVersion, update.newVersion)
+
+        // File reference
+        const fileName = update.file.split('/').pop() || update.file
+        const fileCell = this.config?.repository?.owner && this.config?.repository?.name
+          ? `[\`${fileName}\`](${this.repositoryFileUrl(update.file)})`
+          : `\`${fileName}\``
+
+        body += `| ${packageCell} | ${change} | ${typeEmoji} ${updateType} | ${fileCell} |\n`
+      }
+
+      body += `\n`
+    }
+
     // Dependency files table (enhanced with more information)
     if (dependencyFileUpdates.length > 0) {
       // Only show section header for multi-package updates or when there are multiple package types
@@ -453,14 +620,14 @@ export class PullRequestGenerator {
         const packageCell = `[${displayName}](${packageUrl})`
 
         // Enhanced version change display with update type and proper constraint format
-        const updateType = this.getUpdateType(update.currentVersion, update.newVersion)
+        const updateType = getUpdateType(update.currentVersion, update.newVersion)
         const typeEmoji = updateType === 'major' ? '🔴' : updateType === 'minor' ? '🟡' : '🟢'
         const change = this.formatVersionChange(update.currentVersion, update.newVersion)
 
         // File reference with link to actual file
         const fileName = update.file.split('/').pop() || update.file
         const fileCell = this.config?.repository?.owner && this.config?.repository?.name
-          ? `[\`${fileName}\`](https://github.com/${this.config.repository.owner}/${this.config.repository.name}/blob/main/${update.file})`
+          ? `[\`${fileName}\`](${this.repositoryFileUrl(update.file)})`
           : `\`${fileName}\``
 
         body += `| ${packageCell} | ${change} | ${typeEmoji} ${updateType} | ${fileCell} |\n`
@@ -488,11 +655,11 @@ export class PullRequestGenerator {
 
       for (const update of uniqueGithubActionsUpdates) {
         // Generate action link
-        const actionUrl = `https://github.com/${update.name}`
+        const actionUrl = `${getGitHubServerUrl(this.config)}/${update.name}`
         const actionCell = `[${update.name}](${actionUrl})`
 
         // Enhanced version change display with update type and proper constraint format
-        const updateType = this.getUpdateType(update.currentVersion, update.newVersion)
+        const updateType = getUpdateType(update.currentVersion, update.newVersion)
         const typeEmoji = updateType === 'major' ? '🔴' : updateType === 'minor' ? '🟡' : '🟢'
         const change = this.formatVersionChange(update.currentVersion, update.newVersion)
 
@@ -501,13 +668,13 @@ export class PullRequestGenerator {
           ? update.file.split(', ').map((f) => {
               const fileName = f.split('/').pop() || f
               return this.config?.repository?.owner && this.config?.repository?.name
-                ? `[\`${fileName}\`](https://github.com/${this.config.repository.owner}/${this.config.repository.name}/blob/main/${f})`
+                ? `[\`${fileName}\`](${this.repositoryFileUrl(f)})`
                 : `\`${fileName}\``
             }).join(', ')
           : (() => {
               const fileName = update.file.split('/').pop() || update.file
               return this.config?.repository?.owner && this.config?.repository?.name
-                ? `[\`${fileName}\`](https://github.com/${this.config.repository.owner}/${this.config.repository.name}/blob/main/${update.file})`
+                ? `[\`${fileName}\`](${this.repositoryFileUrl(update.file)})`
                 : `\`${fileName}\``
             })()
 
@@ -520,6 +687,10 @@ export class PullRequestGenerator {
     body += `\n---\n\n`
 
     // Enhanced release notes section
+    const notesSettings = this.releaseNotesSettings
+    if (!notesSettings.enabled)
+      return this.finalizeBody(body, group)
+
     body += `### Release Notes\n\n`
 
     // Process package.json updates with full release notes
@@ -553,10 +724,10 @@ export class PullRequestGenerator {
       body += `**${update.currentVersion} -> ${update.newVersion}**\n\n`
 
       if (releaseNotes.length > 0) {
-        for (const release of releaseNotes.slice(0, 3)) { // Limit to 3 most recent releases
+        for (const release of releaseNotes.slice(0, notesSettings.maxReleases)) {
           body += `### [\`${release.version}\`](${release.htmlUrl})\n\n`
 
-          if (compareUrl) {
+          if (compareUrl && notesSettings.includeCompareLinks) {
             body += `[Compare Source](${compareUrl})\n\n`
           }
 
@@ -567,13 +738,14 @@ export class PullRequestGenerator {
           }
 
           if (release.author) {
-            body += `*Released by [@${release.author}](https://github.com/${release.author}) on ${new Date(release.date).toLocaleDateString()}*\n\n`
+            // Strip '@' in rendered text to avoid accidental pings
+            body += `*Released by [${release.author}](https://github.com/${release.author}) on ${new Date(release.date).toLocaleDateString()}*\n\n`
           }
         }
       }
       else {
         // Fallback content when release notes aren't available
-        if (compareUrl) {
+        if (compareUrl && notesSettings.includeCompareLinks) {
           body += `[Compare Source](${compareUrl})\n\n`
         }
 
@@ -692,6 +864,10 @@ export class PullRequestGenerator {
         if (info?.weeklyDownloads) {
           body += `- **${update.name}**: ${info.weeklyDownloads.toLocaleString()} weekly downloads\n`
         }
+        else {
+          // Fallback when download stats aren't available
+          body += `- **${update.name}**: npm package with weekly downloads tracked on npmjs.com\n`
+        }
       }
 
       // Stats for Composer updates (simplified)
@@ -718,20 +894,64 @@ export class PullRequestGenerator {
       body += `\n---\n\n`
     }
 
-    // Configuration section
-    body += `### Configuration\n\n`
-    body += `📅 **Schedule**: Branch creation - At any time (no schedule defined), Automerge - At any time (no schedule defined).\n\n`
-    body += `🚦 **Automerge**: Disabled by config. Please merge this manually once you are satisfied.\n\n`
-    body += `♻ **Rebasing**: Whenever PR is behind base branch, or you tick the rebase/retry checkbox.\n\n`
-    const ignoreText = group.updates.length === 1 ? 'this update again' : 'these updates again'
-    body += `🔕 **Ignore**: Close this PR and you won't be reminded about ${ignoreText}.\n\n`
-    body += `---\n\n`
-    body += ` - [ ] <!-- rebase-check -->If you want to rebase/retry this PR, check this box\n\n`
-    body += `---\n\n`
-    body += `This PR was generated by [Buddy](https://github.com/stacksjs/buddy-bot) 🤖`
+    return this.finalizeBody(body, group)
+  }
 
-    // Ensure PR body doesn't exceed GitHub's 65,536 character limit
-    const MAX_BODY_LENGTH = 60000 // Leave some buffer
+  /**
+   * Append the configuration footer, enforce GitHub's body limit and attach
+   * the metadata manifest.
+   *
+   * Shared by the normal path and the release-notes-disabled early return, so
+   * both produce a body with a rebase checkbox and a readable manifest.
+   *
+   * @param body - Body accumulated so far
+   * @param group - Update group the body describes
+   * @returns The finished pull request body
+   */
+  private finalizeBody(body: string, group: UpdateGroup): string {
+    // A custom body template replaces the generated prose, but never the
+    // manifest — rebase and auto-close read that back, so it is appended
+    // below regardless of what the template produced.
+    const template = this.config?.pullRequest?.bodyTemplate
+    const rebaseCheckbox = ' - [ ] <!-- rebase-check -->If you want to rebase/retry this PR, check this box'
+
+    if (template) {
+      body = applyTemplate(template, {
+        ...templateTokensForGroup(group, {}, this.config?.packages?.strategy),
+        updatesTable: body,
+        footer: rebaseCheckbox,
+      })
+
+      // The rebase checkbox is how a maintainer asks for an update, so it is
+      // restored even when a template leaves out the {footer} token.
+      if (!body.includes('<!-- rebase-check -->'))
+        body += `\n\n${rebaseCheckbox}\n`
+    }
+    else {
+      // Configuration section
+      body += `### Configuration\n\n`
+      body += `📅 **Schedule**: Branch creation - At any time (no schedule defined), Automerge - At any time (no schedule defined).\n\n`
+      body += `🚦 **Automerge**: Disabled by config. Please merge this manually once you are satisfied.\n\n`
+      body += `♻ **Rebasing**: Whenever PR is behind base branch, or you tick the rebase/retry checkbox.\n\n`
+      const ignoreText = group.updates.length === 1 ? 'this update again' : 'these updates again'
+      body += `🔕 **Ignore**: Close this PR and you won't be reminded about ${ignoreText}.\n\n`
+      body += `---\n\n`
+      body += `${rebaseCheckbox}\n\n`
+      body += `---\n\n`
+      body += `This PR was generated by [Buddy](https://github.com/stacksjs/buddy) 🤖`
+    }
+
+    // The manifest is what rebase and auto-close read back, so it is never a
+    // truncation candidate: reserve its length first and truncate the prose
+    // around it.
+    const manifest = serializeGroupManifest(group)
+
+    // Ensure PR body doesn't exceed GitHub's 65,536 character limit. The
+    // rebase checkbox is reserved like the manifest: it sits near the end,
+    // so truncating the prose used to cut it off, and a large group's PR
+    // could then never be rebased by a person.
+    const checkboxBlock = `---\n\n${rebaseCheckbox}\n\n`
+    const MAX_BODY_LENGTH = 60000 - manifest.length - checkboxBlock.length // Leave some buffer
     if (body.length > MAX_BODY_LENGTH) {
       const truncatedBody = body.substring(0, MAX_BODY_LENGTH)
       const lastDetailsEnd = truncatedBody.lastIndexOf('</details>')
@@ -742,8 +962,11 @@ export class PullRequestGenerator {
       else {
         body = `${truncatedBody}\n\n---\n\n**Note**: This PR body was truncated due to GitHub's character limit.\n\n`
       }
-      body += `This PR was generated by [Buddy](https://github.com/stacksjs/buddy-bot) 🤖`
+      body += checkboxBlock
+      body += `This PR was generated by [Buddy](https://github.com/stacksjs/buddy) 🤖`
     }
+
+    body += manifest
 
     this.log('✅ PR body generation complete', {
       bodyLength: body.length,
@@ -878,6 +1101,13 @@ export class PullRequestGenerator {
   }
 
   /**
+   * Escape delimiters that would otherwise split a GitHub Markdown table row.
+   */
+  private escapeMarkdownTableValue(value: string): string {
+    return value.replaceAll('|', '\\|').replaceAll(/\r?\n/g, ' ')
+  }
+
+  /**
    * Generate a redirect source URL for Composer packages (like npm)
    */
   private getComposerRedirectSourceUrl(repositoryUrl: string, packageName: string): string {
@@ -925,12 +1155,113 @@ export class PullRequestGenerator {
       .replace(/\n{3,}/g, '\n\n')
       .trim()
 
-    // Limit to reasonable length for PR body
-    if (cleaned.length > 1000) {
-      cleaned = `${cleaned.substring(0, 1000)}...\n\n*[View full release notes]*`
+    // Sanitize @mentions to avoid pinging real users in PRs
+    cleaned = this.sanitizeMentions(cleaned)
+
+    // Sanitize GitHub issue/PR references to prevent spam notifications
+    cleaned = this.sanitizeGitHubReferences(cleaned)
+
+    // Limit to reasonable length for PR body (configurable, default: 1000)
+    const maxLength = this.config?.releaseNotes?.maxBodyLength ?? 1000
+    if (cleaned.length > maxLength) {
+      cleaned = `${cleaned.substring(0, maxLength)}...\n\n*[View full release notes]*`
     }
 
     return cleaned
+  }
+
+  /**
+   * Convert plain @mentions into non-pinging links.
+   * Examples:
+   *   @user -> [@user](https://github.com/user)
+   * Avoids matching emails and things inside code fences.
+   */
+  private sanitizeMentions(text: string): string {
+    // Protect fenced code blocks and inline code by temporarily replacing them
+    const fences: string[] = []
+    const placeholders: string[] = []
+
+    // Replace fenced code blocks ```...``` with placeholders
+    let protectedText = text.replace(/```[\s\S]*?```/g, (match) => {
+      fences.push(match)
+      return `__FENCE_PLACEHOLDER_${fences.length - 1}__`
+    })
+
+    // Replace inline code `...` with placeholders (do this after fences)
+    protectedText = protectedText.replace(/`[^`\n]+`/g, (match) => {
+      placeholders.push(match)
+      return `__INLINE_CODE_PLACEHOLDER_${placeholders.length - 1}__`
+    })
+
+    // Replace plain @mentions not part of emails/paths
+    // Negative lookbehind avoids letters, numbers, dot, slash, underscore before @ (emails/paths)
+    // Negative lookahead avoids treating trailing slash or part of longer tokens
+    protectedText = protectedText.replace(/(?<![\w./])@([A-Z0-9-]+)(?![A-Z0-9-])/gi, (_m, user: string) => {
+      // Strip '@' in rendered text to prevent any possibility of pings
+      return `[${user}](https://github.com/${user})`
+    })
+
+    // Restore inline code placeholders
+    protectedText = protectedText.replace(/__INLINE_CODE_PLACEHOLDER_(\d+)__/g, (_m, i: string) => placeholders[Number(i)])
+
+    // Restore fenced code placeholders
+    protectedText = protectedText.replace(/__FENCE_PLACEHOLDER_(\d+)__/g, (_m, i: string) => fences[Number(i)])
+
+    return protectedText
+  }
+
+  /**
+   * Sanitize GitHub issue/PR references to prevent spam notifications.
+   * Converts references like #123 and GitHub URLs into non-linking text.
+   * Examples:
+   *   #123 -> `#123`
+   *   fixes #456 -> fixes `#456`
+   *   https://github.com/org/repo/pull/123 -> `org/repo#123`
+   *   https://github.com/org/repo/issues/456 -> `org/repo#456`
+   */
+  private sanitizeGitHubReferences(text: string): string {
+    // Check if sanitization is enabled (default: true)
+    if (this.config?.releaseNotes?.sanitizeReferences === false) {
+      return text
+    }
+
+    // Protect fenced code blocks and inline code by temporarily replacing them
+    const fences: string[] = []
+    const inlineCode: string[] = []
+
+    // Replace fenced code blocks ```...``` with placeholders
+    let protectedText = text.replace(/```[\s\S]*?```/g, (match) => {
+      fences.push(match)
+      return `__FENCE_PLACEHOLDER_${fences.length - 1}__`
+    })
+
+    // Replace inline code `...` with placeholders
+    protectedText = protectedText.replace(/`[^`\n]+`/g, (match) => {
+      inlineCode.push(match)
+      return `__INLINE_CODE_PLACEHOLDER_${inlineCode.length - 1}__`
+    })
+
+    // Replace full GitHub issue/PR URLs with non-linking format
+    // https://github.com/org/repo/pull/123 -> `org/repo#123`
+    // https://github.com/org/repo/issues/456 -> `org/repo#456`
+    protectedText = protectedText.replace(
+      /https?:\/\/github\.com\/([^/]+)\/([^/]+)\/(?:pull|issues)\/(\d+)/g,
+      (_match, owner: string, repo: string, num: string) => `\`${owner}/${repo}#${num}\``,
+    )
+
+    // Replace standalone issue/PR references #123 with backtick-wrapped version
+    // This prevents GitHub from creating links/notifications
+    // Negative lookbehind: don't match if preceded by ` or alphanumeric (part of URL or already wrapped)
+    // Negative lookahead: don't match if followed by alphanumeric
+    protectedText = protectedText.replace(/(?<![`\w])#(\d+)(?!\d)/g, '`#$1`')
+
+    // Restore inline code placeholders
+    protectedText = protectedText.replace(/__INLINE_CODE_PLACEHOLDER_(\d+)__/g, (_m, i: string) => inlineCode[Number(i)])
+
+    // Restore fenced code placeholders
+    protectedText = protectedText.replace(/__FENCE_PLACEHOLDER_(\d+)__/g, (_m, i: string) => fences[Number(i)])
+
+    return protectedText
   }
 
   /**
@@ -959,31 +1290,6 @@ export class PullRequestGenerator {
     }
 
     return result
-  }
-
-  /**
-   * Determine update type between two versions
-   */
-  private getUpdateType(currentVersion: string, newVersion: string): 'major' | 'minor' | 'patch' {
-    // Remove any prefixes like ^, ~, >=, v, @, etc.
-    const cleanCurrent = currentVersion.replace(/^[v^~>=<@]+/, '')
-    const cleanNew = newVersion.replace(/^[v^~>=<@]+/, '')
-
-    try {
-      if (Bun.semver.order(cleanNew, cleanCurrent) <= 0)
-        return 'patch'
-
-      if (Bun.semver.satisfies(cleanNew, `~${cleanCurrent}`))
-        return 'patch'
-
-      if (Bun.semver.satisfies(cleanNew, `^${cleanCurrent}`))
-        return 'minor'
-    }
-    catch {
-      return 'patch'
-    }
-
-    return 'major'
   }
 
   /**

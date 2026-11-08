@@ -1,14 +1,32 @@
-<p align="center"><img src="https://github.com/stacksjs/buddy-bot/blob/main/.github/art/cover.jpg?raw=true" alt="Social Card of this repo"></p>
+<p align="center"><img src="https://github.com/stacksjs/buddy/blob/main/.github/art/cover.jpg?raw=true" alt="Social Card of this repo"></p>
 
-# Intelligent Dependency Management
+# Meet Buddy
 
-> Automated dependency updates with professional pull requests, smart scheduling, and team integration.
+> AI code review and dependency updates, in one teammate that runs on your CI with your keys.
 
-Buddy-bot is a modern dependency management tool that automatically scans your project for outdated packages and creates professional pull requests with detailed release notes, impact analysis, and intelligent labeling. Built on Bun's lightning-fast package manager, it provides enterprise-grade automation for keeping your dependencies up-to-date.
+Buddy does two jobs that are usually split across two bots and two subscriptions.
 
-## Key Features
+**It reviews code.** Pull requests and your local working tree alike: inline findings anchored to the lines you actually changed, a summary that is worth reading, `@buddy` commands answered in the thread, merge gates published as real check runs, and CI repair when a failure has an unambiguous fix. Where a hosted reviewer installs an app on your repository and sends your diff to its own infrastructure, Buddy runs as a step in your own workflow against a provider you choose — or against no provider at all, in which case you keep the static analyzers.
 
-- **🔍 Smart Scanning** - Lightning-fast dependency detection using Bun, ts-pkgx, and GitHub API
+**It manages dependencies.** Scanning, grouping, real changelogs, security advisories from [OSV.dev](https://osv.dev), auto-merge, lock file regeneration and a pinned dashboard issue — across npm, Bun, yarn, pnpm, Composer, Docker, GitHub Actions, pkgx, Launchpad, Go, Rust, Python, Ruby and Zig. It will migrate your existing Renovate or Dependabot configuration for you.
+
+Neither half depends on the other. Run the reviewer alone, run the updater alone, or run both.
+
+## Code Review Features
+
+- **🔍 Inline Findings** - Anchored to changed lines, stating the failure rather than a preference
+- **♻️ Incremental** - A second push gets new findings, not the ones you already read
+- **💬 Conversational** - `@buddy review`, `full-review`, `summary`, `pause`, `resume`, `ignore`, `rebase`, `merge`, `fix-ci`, `remember`, or a plain question
+- **💻 Local Review** - `buddy review` reads the working tree, so problems surface before the PR exists
+- **🦴 No Key Required** - `--light` runs secret scanning, actionlint, shellcheck, hadolint, markdownlint and syntax checks offline
+- **🚦 Merge Gates** - Title format, description quality, linked issue and dependency policy, published as a check run
+- **🛠️ CI Repair** - `buddy fix-ci` classifies a failing run and opens the fix when it is clear
+- **🔌 Pipeable** - `--format json`, `github` annotations, or `agent` to hand findings to a coding agent
+- **🧠 Your Provider** - Anthropic, OpenAI, Google, OpenRouter, or any OpenAI-compatible endpoint
+
+## Dependency Features
+
+- **🔍 Smart Scanning** - Lightning-fast dependency detection using Bun, ts-pantry, and GitHub API
 - **🤖 Automated PRs** - Professional pull requests with three separate dependency tables
 - **📁 Multi-Format Support** - Handles package.json, pkgx, Launchpad dependency files, and GitHub Actions
 - **🏷️ Dynamic Labeling** - Contextual labels based on update type and package ecosystem
@@ -25,17 +43,17 @@ Buddy-bot is a modern dependency management tool that automatically scans your p
 ## 🚀 Quick Start
 
 ```bash
-# Install buddy-bot
-bun add --global buddy-bot
+# Install buddy
+bun add --global @buddysh/buddy
 
 # Interactive setup (recommended)
-buddy-bot setup
+buddy setup
 
 # Or scan for outdated packages
-buddy-bot scan
+buddy scan
 
 # Create update pull requests
-buddy-bot update
+buddy update
 ```
 
 ## 🛠️ Interactive Setup
@@ -43,28 +61,32 @@ buddy-bot update
 The fastest way to get started is with the interactive setup command:
 
 ```bash
-buddy-bot setup
+buddy setup
 ```
 
 This comprehensive setup wizard provides a **Renovate-like experience** that automatically configures your entire dependency management workflow:
 
 ### Setup Process
 
-**🔍 Step 1: Repository Detection**
+#### 🔍 Step 1: Repository Detection
+
 - Automatically detects your GitHub repository from git remote
 - Validates repository access and configuration
 
-**🔑 Step 2: GitHub Token Setup**
+#### 🔑 Step 2: GitHub Token Setup
+
 - Guides you through creating a Personal Access Token (PAT)
 - Explains required scopes (`repo`, `workflow`) for full functionality
 - Helps set up repository secrets for enhanced features
 
-**🔧 Step 3: Repository Settings**
+#### 🔧 Step 3: Repository Settings
+
 - Walks you through GitHub Actions permissions configuration
 - Ensures proper workflow permissions for PR creation
 
 **⚙️ Step 4: Workflow Configuration**
 Choose from carefully crafted presets:
+
 - **Standard Setup** - Dashboard updates 3x/week, balanced dependency updates
 - **High Frequency** - Check for updates multiple times per day
 - **Security Focused** - Frequent patch updates with security-first approach
@@ -72,17 +94,19 @@ Choose from carefully crafted presets:
 - **Development/Testing** - Manual triggers + frequent checks for testing
 - **Custom Configuration** - Create your own schedule
 
-**📝 Step 5: Configuration Generation**
-- Creates `buddy-bot.config.json` with your repository settings
+#### 📝 Step 5: Configuration Generation
+
+- Creates `buddy.config.ts` with your repository settings
 - Includes sensible defaults and customization options
 
 **🔄 Step 6: Workflow Generation**
-Generates three core GitHub Actions workflows:
-- `buddy-dashboard.yml` - Dependency Dashboard Management
-- `buddy-check.yml` - Auto-rebase PR checker
-- `buddy-update.yml` - Scheduled dependency updates
+Generates two GitHub Actions workflows:
 
-**🎯 Step 7: Final Instructions**
+- `buddy.yml` - Unified workflow covering checks, updates and the dashboard
+- `buddy-security.yml` - Workflow security audit, on its own path filters
+
+#### 🎯 Step 7: Final Instructions
+
 - Provides clear next steps with git commands
 - Links to GitHub settings pages for easy configuration
 - Explains token setup and repository permissions
@@ -90,7 +114,8 @@ Generates three core GitHub Actions workflows:
 ### What You Get
 
 After the enhanced setup completes, you'll have:
-- ✅ **Complete automation** - Three production-ready workflows with validation
+
+- ✅ **Complete automation** - Two production-ready workflows with validation
 - ✅ **Professional dashboard** - Single issue tracking all dependencies
 - ✅ **Interactive rebasing** - Checkbox-based PR updates with conflict resolution
 - ✅ **Smart scheduling** - Optimized update frequency based on project analysis
@@ -102,7 +127,7 @@ After the enhanced setup completes, you'll have:
 
 ## 📖 Example Pull Request
 
-Buddy-bot creates professional pull requests that include:
+Buddy creates professional pull requests that include:
 
 - **Comprehensive update tables** with current and target versions
 - **Detailed release notes** extracted from changelogs and GitHub releases
@@ -116,8 +141,8 @@ Buddy-bot creates professional pull requests that include:
 ## 🔧 Configuration
 
 ```typescript
-// buddy-bot.config.ts
-import type { BuddyBotConfig } from 'buddy-bot'
+// buddy.config.ts
+import type { BuddyConfig } from '@buddysh/buddy'
 
 export default {
   repository: {
@@ -131,7 +156,7 @@ export default {
     groups: [
       {
         name: 'React Ecosystem',
-        packages: ['react', 'react-dom', '@types/react'],
+        patterns: ['react', 'react-dom', '@types/react'],
         strategy: 'minor',
       },
     ],
@@ -149,24 +174,27 @@ export default {
   schedule: {
     cron: '0 2 * * 1', // Weekly on Monday at 2 AM
   },
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ## Use Cases
 
 ### Enterprise Teams
+
 - **Automated dependency management** across multiple repositories
 - **Security-first updates** with priority scheduling
 - **Team-based review workflows** with automatic assignments
 - **Compliance tracking** with detailed update logs
 
 ### Open Source Projects
+
 - **Community-friendly PRs** with detailed explanations
 - **Contributor onboarding** through automated maintenance
 - **Release coordination** with grouped package updates
 - **Documentation integration** with changelog extraction
 
 ### CI/CD Pipelines
+
 - **Scheduled automation** with GitHub Actions
 - **Multi-strategy updates** (patch, minor, major)
 - **Auto-merge capabilities** for trusted updates
@@ -180,6 +208,7 @@ export default {
 name: Dependency Updates
 on:
   schedule:
+
     - cron: '0 2 * * 1' # Weekly
 
 jobs:
@@ -189,9 +218,11 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v1
-      - run: bunx buddy-bot update
+      - run: bunx @buddysh/buddy update
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -200,18 +231,20 @@ jobs:
 
 ```bash
 # Daily security patches
-buddy-bot update --strategy patch --auto-merge
+buddy update --strategy patch
 
 # Weekly minor updates
-buddy-bot update --strategy minor --reviewers team-lead
+buddy update --strategy minor
 
-# Monthly major updates
-buddy-bot update --strategy major --assignees senior-dev
+# Monthly major updates, holding back one package
+buddy update --strategy major --ignore legacy-package
 ```
+
+Reviewers, assignees, labels and auto-merge are not command line flags — set them once under `pullRequest` in `buddy.config.ts` and every run picks them up.
 
 ## 🏗️ Architecture
 
-Buddy-bot is built with modern tools and best practices:
+Buddy is built with modern tools and best practices:
 
 - **⚡ Bun Runtime** - Lightning-fast package management and execution
 - **🔍 TypeScript** - Full type safety and IDE integration
@@ -225,21 +258,21 @@ Buddy-bot is built with modern tools and best practices:
 |---------|-------|------------|----------|
 | **Speed** | ⚡ Bun-native | 🐌 Slower | 🐌 Slower |
 | **Package Managers** | Bun, npm, yarn, pnpm, pkgx, Launchpad | Limited | Limited |
-| **Configuration** | TypeScript, YAML, JSON/JS, package.json | YAML | JSON/JS |
+| **Configuration** | TypeScript, JS, JSON | YAML | JSON/JS |
 | **Grouping** | ✅ Flexible | ✅ Basic | ✅ Advanced |
 | **Zero Config** | ✅ Yes | ✅ Yes | ❌ Complex |
 | **Self-hosted** | ✅ Yes | ❌ GitHub only | ✅ Yes |
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](https://github.com/stacksjs/buddy-bot/blob/main/CONTRIBUTING.md) for details.
+We welcome contributions! Please see our [Contributing Guide](https://github.com/stacksjs/buddy/blob/main/CONTRIBUTING.md) for details.
 
 ### Development Setup
 
 ```bash
 # Clone the repository
-git clone https://github.com/stacksjs/buddy-bot.git
-cd buddy-bot
+git clone https://github.com/stacksjs/buddy.git
+cd buddy
 
 # Install dependencies
 bun install
@@ -253,31 +286,31 @@ bun dev
 
 ## Changelog
 
-Please see our [releases](https://github.com/stacksjs/buddy-bot/releases) page for more information on what has changed recently.
+Please see our [releases](https://github.com/stacksjs/buddy/releases) page for more information on what has changed recently.
 
 ## Stargazers
 
-[![Stargazers over time](https://starchart.cc/stacksjs/buddy-bot.svg?variant=adaptive)](https://starchart.cc/stacksjs/buddy-bot)
+[![Stargazers over time](https://starchart.cc/stacksjs/buddy.svg?variant=adaptive)](https://starchart.cc/stacksjs/buddy)
 
 ## Community
 
 For help, discussion about best practices, or any other conversation that would benefit from being searchable:
 
-[Discussions on GitHub](https://github.com/stacksjs/buddy-bot/discussions)
+[Discussions on GitHub](https://github.com/stacksjs/buddy/discussions)
 
 For casual chit-chat with others using this package:
 
-[Join the Stacks Discord Server](https://discord.gg/stacksjs)
+[Join the Stacks Discord Server](https://stacksjs.com/discord)
 
 ## Postcardware
 
-Two things are true: Buddy-bot will always stay open-source, and we do love to receive postcards from wherever it's used! 🌍 _We also publish them on our website._
+Two things are true: Buddy will always stay open-source, and we do love to receive postcards from wherever it's used! 🌍 *We also publish them on our website.*
 
 Our address: Stacks.js, 12665 Village Ln #2306, Playa Vista, CA 90094
 
 ## Sponsors
 
-We would like to extend our thanks to the following sponsors for funding Buddy-bot development. If you are interested in becoming a sponsor, please reach out to us.
+We would like to extend our thanks to the following sponsors for funding Buddy development. If you are interested in becoming a sponsor, please reach out to us.
 
 - [JetBrains](https://www.jetbrains.com/)
 - [The Solana Foundation](https://solana.com/)
@@ -285,15 +318,14 @@ We would like to extend our thanks to the following sponsors for funding Buddy-b
 ## Credits
 
 - [Chris Breuer](https://github.com/chrisbbreuer)
-- [All Contributors](https://github.com/stacksjs/buddy-bot/graphs/contributors)
+- [All Contributors](https://github.com/stacksjs/buddy/graphs/contributors)
 
 ## License
 
-The MIT License (MIT). Please see [LICENSE](https://github.com/stacksjs/buddy-bot/tree/main/LICENSE.md) for more information.
+The MIT License (MIT). Please see [LICENSE](https://github.com/stacksjs/buddy/tree/main/LICENSE.md) for more information.
 
 Made with 💙
 
 <!-- Badges -->
 
 <!-- [codecov-src]: https://img.shields.io/codecov/c/gh/stacksjs/buddy/main?style=flat-square
-[codecov-href]: https://codecov.io/gh/stacksjs/buddy -->

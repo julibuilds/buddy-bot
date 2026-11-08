@@ -3,14 +3,19 @@ import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+// Anchor the restore-target at module load, not inside beforeEach. If a
+// previous test (in this file or another) left process.cwd() inside its
+// own tmpdir, capturing it in beforeEach would point our afterEach at a
+// directory that the prior test then deleted — and the next chdir back
+// would throw ENOENT, failing the otherwise-passing test.
+const originalCwd = process.cwd()
+
 describe('CLI Non-Interactive Integration Tests', () => {
   let testDir: string
-  let originalCwd: string
 
   beforeEach(async () => {
     // Create a temporary directory for each test
-    testDir = await fs.mkdtemp(join(tmpdir(), 'buddy-bot-cli-test-'))
-    originalCwd = process.cwd()
+    testDir = await fs.mkdtemp(join(tmpdir(), 'buddy-cli-test-'))
     process.chdir(testDir)
 
     // Create a mock Git repository structure
@@ -37,7 +42,14 @@ describe('CLI Non-Interactive Integration Tests', () => {
   })
 
   afterEach(async () => {
-    process.chdir(originalCwd)
+    // Defensive fallback in case originalCwd was captured while a prior
+    // test had cwd set inside a since-deleted tmpdir.
+    try {
+      process.chdir(originalCwd)
+    }
+    catch {
+      process.chdir(tmpdir())
+    }
     await fs.rm(testDir, { recursive: true, force: true })
   })
 
@@ -83,7 +95,7 @@ describe('CLI Non-Interactive Integration Tests', () => {
 
       // Generate config file (default token)
       await generateConfigFile(finalRepoInfo, false)
-      const configExists = await fs.access('buddy-bot.config.ts').then(() => true).catch(() => false)
+      const configExists = await fs.access('buddy.config.ts').then(() => true).catch(() => false)
       expect(configExists).toBe(true)
 
       // Generate workflows with standard preset
@@ -93,7 +105,7 @@ describe('CLI Non-Interactive Integration Tests', () => {
 
       // Verify all three workflow files were created
       // Check that the unified workflow file exists
-      const unifiedExists = await fs.access('.github/workflows/buddy-bot.yml').then(() => true).catch(() => false)
+      const unifiedExists = await fs.access('.github/workflows/buddy.yml').then(() => true).catch(() => false)
       expect(unifiedExists).toBe(true)
 
       // Check that old individual workflow files do not exist (they should be cleaned up)
@@ -109,9 +121,10 @@ describe('CLI Non-Interactive Integration Tests', () => {
       }
 
       // Verify the unified workflow has the correct content
-      const unifiedContent = await fs.readFile('.github/workflows/buddy-bot.yml', 'utf-8')
-      expect(unifiedContent).toContain('name: Buddy Bot')
-      expect(unifiedContent).toContain('cron: \'0 */2 * * *\'')
+      const unifiedContent = await fs.readFile('.github/workflows/buddy.yml', 'utf-8')
+      expect(unifiedContent).toContain('name: Buddy')
+      // The standard preset's own schedule, not a constant the generator invents.
+      expect(unifiedContent).toContain('cron: \'0 9 * * 1,3,5\'')
       expect(unifiedContent).toContain('default: true') // dry_run default
     })
 
@@ -135,12 +148,15 @@ describe('CLI Non-Interactive Integration Tests', () => {
       await generateCoreWorkflows(preset, finalRepoInfo, true, logger)
 
       // Verify config file has custom token setup
-      const configContent = await fs.readFile('buddy-bot.config.ts', 'utf-8')
-      expect(configContent).toContain('// token: process.env.BUDDY_BOT_TOKEN,')
+      const configContent = await fs.readFile('buddy.config.ts', 'utf-8')
+      expect(configContent).toContain('// token: process.env.BUDDY_TOKEN,')
 
-      // Verify workflow has custom token environment
-      const unifiedContent = await fs.readFile('.github/workflows/buddy-bot.yml', 'utf-8')
-      expect(unifiedContent).toContain('BUDDY_BOT_TOKEN || secrets.GITHUB_TOKEN')
+      // Verify workflow uses built-in GITHUB_TOKEN (not overridden with PAT)
+      const unifiedContent = await fs.readFile('.github/workflows/buddy.yml', 'utf-8')
+      // eslint-disable-next-line no-template-curly-in-string
+      expect(unifiedContent).toContain('GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}')
+      // eslint-disable-next-line no-template-curly-in-string
+      expect(unifiedContent).toContain('BUDDY_TOKEN: ${{ secrets.BUDDY_TOKEN }}')
     })
 
     it('should handle different token setup modes', async () => {
@@ -151,14 +167,14 @@ describe('CLI Non-Interactive Integration Tests', () => {
 
       // Test default token mode
       await generateConfigFile(finalRepoInfo, false)
-      let configContent = await fs.readFile('buddy-bot.config.ts', 'utf-8')
+      let configContent = await fs.readFile('buddy.config.ts', 'utf-8')
       expect(configContent).toContain('// Uses GITHUB_TOKEN by default')
-      await fs.unlink('buddy-bot.config.ts')
+      await fs.unlink('buddy.config.ts')
 
       // Test custom token mode
       await generateConfigFile(finalRepoInfo, true)
-      configContent = await fs.readFile('buddy-bot.config.ts', 'utf-8')
-      expect(configContent).toContain('// token: process.env.BUDDY_BOT_TOKEN,')
+      configContent = await fs.readFile('buddy.config.ts', 'utf-8')
+      expect(configContent).toContain('// token: process.env.BUDDY_TOKEN,')
     })
   })
 
@@ -170,8 +186,8 @@ describe('CLI Non-Interactive Integration Tests', () => {
 
       // Test all the required sections from the specification
       const requiredSections = [
-        'name: Buddy Bot',
-        'cron: \'0 */2 * * *\'',
+        'name: Buddy',
+        'cron: \'0 9 * * 1,3,5\'',
         'workflow_dispatch:',
         'strategy:',
         'dry_run:',
@@ -184,7 +200,7 @@ describe('CLI Non-Interactive Integration Tests', () => {
         'Setup PHP and Composer',
         'Install dependencies',
         'Install Composer dependencies',
-        // 'Build buddy-bot', // Removed from unified workflow
+        // 'Build buddy', // Removed from unified workflow
         'Configure Git',
         'Setup PHP and Composer (if needed)',
         'Display update configuration',
@@ -212,13 +228,16 @@ describe('CLI Non-Interactive Integration Tests', () => {
       const workflow = generateUnifiedWorkflow(false)
 
       const requiredSections = [
-        'name: Buddy Bot',
-        'cron: \'*/1 * * * *\'',
+        'name: Buddy',
+        'pull_request:', // Rebase checkbox triggers instantly via PR edit event
+        // `edited` is what fires the rebase checkbox; the list has grown since
+        // (closed drives post-merge, opened drives gates) so this asserts the
+        // trigger rather than the exact set.
+        'types: [edited,',
         'workflow_dispatch:',
         'dry_run:',
         'check:', // job name
-        'bunx buddy-bot update-check',
-        'Check for rebase requests',
+        'bunx @buddysh/buddy update-check',
       ]
 
       for (const section of requiredSections) {
@@ -232,10 +251,10 @@ describe('CLI Non-Interactive Integration Tests', () => {
       const workflow = generateUnifiedWorkflow(false)
 
       const requiredSections = [
-        'name: Buddy Bot',
-        'cron: \'15 */2 * * *\'',
+        'name: Buddy',
+        'cron: \'0 9 * * 1,3,5\'',
         'workflow_dispatch:',
-        'bunx buddy-bot dashboard',
+        'bunx @buddysh/buddy dashboard',
         'dashboard-update:', // job name
       ]
 
@@ -299,11 +318,11 @@ describe('CLI Non-Interactive Integration Tests', () => {
       await generateCoreWorkflows(preset, repoInfo, false, logger)
 
       // Check that unified workflow was created
-      const unifiedExists = await fs.access('.github/workflows/buddy-bot.yml').then(() => true).catch(() => false)
+      const unifiedExists = await fs.access('.github/workflows/buddy.yml').then(() => true).catch(() => false)
       expect(unifiedExists).toBe(true)
 
-      const unifiedContent = await fs.readFile('.github/workflows/buddy-bot.yml', 'utf-8')
-      expect(unifiedContent).toContain('name: Buddy Bot')
+      const unifiedContent = await fs.readFile('.github/workflows/buddy.yml', 'utf-8')
+      expect(unifiedContent).toContain('name: Buddy')
       expect(unifiedContent).not.toContain('name: Old Buddy')
 
       // Check that old workflow was cleaned up
@@ -382,7 +401,7 @@ describe('CLI Non-Interactive Integration Tests', () => {
 
       // Check that only expected files were created
       const files = await fs.readdir('.')
-      expect(files).toContain('buddy-bot.config.ts')
+      expect(files).toContain('buddy.config.ts')
       expect(files).not.toContain('tmp')
       expect(files).not.toContain('.tmp')
     })

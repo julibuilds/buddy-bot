@@ -7,13 +7,15 @@ Buddy's dependency scanning engine is built on top of Bun's native dependency ma
 Buddy uses multiple scanning approaches depending on the file type:
 
 ### Package.json Scanning
+
 - **Native Performance**: Direct integration with Bun's C++ engine using `bun outdated`
 - **Accurate Detection**: Uses lockfile analysis for precise version matching
 - **Multi-Registry Support**: npm, JSR, and other registries
 - **Package Manager Agnostic**: Works with npm, yarn, pnpm, and Bun
 
 ### Dependency File Scanning
-- **pkgx Integration**: Uses `ts-pkgx` library for parsing dependency files
+
+- **pkgx Integration**: Uses `ts-pantry` library for parsing dependency files
 - **Registry Compatibility**: Full compatibility with pkgx registry ecosystem
 - **Format Support**: Handles multiple YAML formats (`.yaml`, `.yml`)
 - **Launchpad Support**: Compatible with Launchpad dependency files
@@ -46,7 +48,7 @@ All dependency files are scanned using the same intelligent update strategies an
 Configure how aggressively Buddy should scan for updates:
 
 ```typescript
-// buddy-bot.config.ts
+// buddy.config.ts
 export default {
   packages: {
     strategy: 'patch', // 'major' | 'minor' | 'patch' | 'all'
@@ -65,15 +67,28 @@ export default {
 
 #### Ignore Packages
 
-Skip specific packages from scanning:
+Skip specific packages from scanning. Entries are compared by exact name — no
+globs:
 
 ```typescript
 export default {
   packages: {
     ignore: [
-      '@types/node', // Specific package
-      '@types/*', // Glob patterns
+      '@types/node', // Exact package name
       'react', // Dependencies you want to control manually
+    ]
+  }
+}
+```
+
+To skip a whole family, use a rule with `matchPackages`, which does take
+patterns:
+
+```typescript
+export default {
+  packages: {
+    rules: [
+      { matchPackages: ['@types/*'], enabled: false }
     ]
   }
 }
@@ -104,12 +119,12 @@ export default {
     groups: [
       {
         name: 'React Ecosystem',
-        packages: ['react', 'react-dom', '@types/react'],
+        patterns: ['react', 'react-dom', '@types/react'],
         strategy: 'minor'
       },
       {
         name: 'Build Tools',
-        packages: ['typescript', 'vite', 'rollup'],
+        patterns: ['typescript', 'vite', 'rollup'],
         strategy: 'patch'
       }
     ]
@@ -123,36 +138,36 @@ export default {
 
 ```bash
 # Scan all dependencies
-buddy-bot scan
+buddy scan
 
 # Verbose output with detailed information
-buddy-bot scan --verbose
+buddy scan --verbose
 
 # Scan with specific strategy
-buddy-bot scan --strategy patch
+buddy scan --strategy patch
 ```
 
 ### Targeted Scanning
 
 ```bash
 # Scan specific packages only
-buddy-bot scan --packages "react,typescript"
+buddy scan --packages "react,typescript"
 
 # Use glob patterns
-buddy-bot scan --pattern "@types/*"
+buddy scan --pattern "@types/*"
 
 # Ignore specific packages during scan
-buddy-bot scan --ignore "eslint,prettier"
+buddy scan --ignore "eslint,prettier"
 ```
 
 ### Check Specific Packages
 
 ```bash
 # Check if specific packages have updates
-buddy-bot check react typescript
+buddy check react typescript
 
 # Check with specific strategy
-buddy-bot check react --strategy minor
+buddy check react --strategy minor
 ```
 
 ## Scan Results
@@ -160,12 +175,14 @@ buddy-bot check react --strategy minor
 Buddy provides detailed scan results with:
 
 ### Package Information
+
 - Current version
 - Latest available version
 - Update type (major/minor/patch)
 - Package metadata (description, homepage, license)
 
 ### Update Analysis
+
 - **Security Updates**: Automatically detected security-related packages
 - **Breaking Changes**: Major version updates flagged for review
 - **Release Notes**: Automatically fetched from package registries
@@ -222,7 +239,7 @@ export default {
     groups: [
       {
         name: 'Security Updates',
-        packages: ['helmet', 'cors', 'express-rate-limit'],
+        patterns: ['helmet', 'cors', 'express-rate-limit'],
         strategy: 'all' // Always get security updates
       }
     ]
@@ -240,7 +257,7 @@ export default {
     groups: [
       {
         name: 'Frontend',
-        packages: ['react*', 'vue*', '@vue/*'],
+        patterns: ['react*', 'vue*', '@vue/*'],
         strategy: 'minor' // Allow minor updates for frontend
       }
     ]
@@ -261,16 +278,23 @@ export default {
 ### Common Issues
 
 **Scan finds no updates:**
+
 - Check if packages are in ignore list
 - Verify strategy allows the available update types
 - Ensure package.json is readable
 
 **Incorrect versions detected:**
+
 - Update Bun to latest version
 - Clear Bun cache: `bun install --force`
 - Check for corrupted lockfiles
 
 **Performance issues:**
+
 - Reduce concurrent scans in large monorepos
 - Use more specific package patterns
 - Enable caching in CI environments
+
+## File ownership
+
+Discovery scans regular manifest files in real project directories. Symbolic links, including package-manager aliases into installed dependencies, are excluded. Real workspace and vendored manifests remain discoverable. Git update-target and write-boundary checks still apply before a dependency change is committed.

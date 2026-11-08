@@ -1,4 +1,4 @@
-import type { BuddyBotConfig } from '../types'
+import type { BuddyConfig } from '../types'
 import process from 'node:process'
 import { Buddy } from '../buddy'
 import { Logger } from '../utils/logger'
@@ -21,7 +21,7 @@ export interface SchedulerJob {
   lastRun?: Date
   nextRun?: Date
   status: 'idle' | 'running' | 'error'
-  config: BuddyBotConfig
+  config: BuddyConfig
 }
 
 export class Scheduler {
@@ -239,14 +239,16 @@ export class Scheduler {
     const [minuteStr, hourStr, _dayStr, _monthStr, _dayOfWeekStr] = parts
     const now = new Date()
 
-    // Apply timezone offset if specified
-    if (timezone) {
-      // This is simplified - in production use a proper timezone library
-      this.logger.debug(`Using timezone: ${timezone}`)
-    }
+    // Cron fields name a wall-clock time in the configured zone, so the offset
+    // between that zone and the host's is applied before and after the
+    // arithmetic. Without this, `0 9 * * *` with `timezone: 'Asia/Tokyo'` runs
+    // at 09:00 on whatever the runner's clock happens to be.
+    const offsetMinutes = timezone ? this.timezoneOffsetMinutes(now, timezone) : 0
+    if (timezone)
+      this.logger.debug(`Using timezone: ${timezone} (offset ${offsetMinutes} minutes)`)
 
     // Find next valid time (simplified logic)
-    const next = new Date(now)
+    const next = new Date(now.getTime() + offsetMinutes * 60 * 1000)
     next.setSeconds(0, 0)
 
     // Parse hour and minute
@@ -258,20 +260,45 @@ export class Scheduler {
       next.setHours(targetHour[0], targetMinute[0], 0, 0)
 
       // If time has passed today, schedule for tomorrow
-      if (next <= now) {
+      if (next.getTime() - offsetMinutes * 60 * 1000 <= now.getTime()) {
         next.setDate(next.getDate() + 1)
       }
-    }
-    else {
-      // Default to next hour
-      next.setTime(now.getTime() + 60 * 60 * 1000)
+
+      // Back out of the target zone into host time, which is what timers use.
+      return new Date(next.getTime() - offsetMinutes * 60 * 1000)
     }
 
-    return next
+    // Default to next hour
+    return new Date(now.getTime() + 60 * 60 * 1000)
   }
 
   /**
-   * Parse individual cron field
+   * Minutes to add to host-local time to reach wall-clock time in `timezone`.
+   *
+   * Uses `Intl` rather than a fixed table so daylight saving is handled for the
+   * date in question. An unknown zone yields `0` and a warning, since refusing
+   * to schedule at all would be worse than scheduling in host time.
+   *
+   * @param at - Instant to compute the offset for
+   * @param timezone - IANA zone name, e.g. `Europe/Berlin`
+   */
+  private timezoneOffsetMinutes(at: Date, timezone: string): number {
+    try {
+      // Format the same instant in both zones and compare: the difference is
+      // the offset, daylight saving included.
+      const inZone = new Date(at.toLocaleString('en-US', { timeZone: timezone }))
+      const inHost = new Date(at.toLocaleString('en-US'))
+      return Math.round((inZone.getTime() - inHost.getTime()) / 60000)
+    }
+    catch {
+      this.logger.warn(`⚠️ Unknown timezone "${timezone}", scheduling in host time instead`)
+      return 0
+    }
+  }
+
+  /**
+   * Parse individual cron field. Returns [] for malformed input rather than throwing,
+   * so the caller can fall back to a safe default instead of crashing.
    */
   private parseCronField(field: string, min: number, max: number): number[] {
     if (field === '*') {
@@ -279,28 +306,37 @@ export class Scheduler {
     }
 
     if (field.includes(',')) {
-      return field.split(',').map(Number).filter(n => n >= min && n <= max)
+      return field.split(',').map(Number).filter(n => Number.isFinite(n) && n >= min && n <= max)
     }
 
     if (field.includes('-')) {
-      const [start, end] = field.split('-').map(Number)
-      return Array.from({ length: end - start + 1 }, (_, i) => start + i)
+      const parts = field.split('-').map(Number)
+      const start = parts[0]
+      const end = parts[1]
+      if (parts.length !== 2 || !Number.isFinite(start) || !Number.isFinite(end) || end < start)
+        return []
+      return Array.from({ length: end - start + 1 }, (_, i) => start + i).filter(n => n >= min && n <= max)
     }
 
     if (field.includes('/')) {
-      const [range, step] = field.split('/')
-      const values = range === '*' ? Array.from({ length: max - min + 1 }, (_, i) => min + i) : [Number(range)]
-      return values.filter((_, i) => i % Number(step) === 0)
+      const [range, stepStr] = field.split('/')
+      const step = Number(stepStr)
+      if (!Number.isFinite(step) || step <= 0)
+        return []
+      if (range === '*')
+        return Array.from({ length: max - min + 1 }, (_, i) => min + i).filter((_, i) => i % step === 0)
+      const startNum = Number(range)
+      return Number.isFinite(startNum) ? [startNum].filter(n => n >= min && n <= max) : []
     }
 
     const num = Number(field)
-    return Number.isNaN(num) ? [] : [num]
+    return Number.isFinite(num) && num >= min && num <= max ? [num] : []
   }
 
   /**
    * Create a job from configuration
    */
-  static createJobFromConfig(config: BuddyBotConfig, jobId = 'default'): SchedulerJob {
+  static createJobFromConfig(config: BuddyConfig, jobId = 'default'): SchedulerJob {
     const schedule: ScheduleConfig = {
       cron: config.schedule?.cron || '0 2 * * 1', // Default: Monday 2 AM
       timezone: config.schedule?.timezone,

@@ -26,6 +26,7 @@ Buddy automatically detects and updates various dependency file formats:
 #### Package Dependencies
 
 ##### npm Ecosystem
+
 ```json
 # package.json - Traditional npm, Bun, yarn, pnpm dependencies
 {
@@ -41,6 +42,7 @@ Buddy automatically detects and updates various dependency file formats:
 ```
 
 ##### PHP/Composer Ecosystem
+
 ```json
 # composer.json - PHP dependencies from Packagist
 {
@@ -58,6 +60,7 @@ Buddy automatically detects and updates various dependency file formats:
 ```
 
 ##### pkgx/Launchpad Ecosystem
+
 ```yaml
 # deps.yaml / deps.yml - pkgx and Launchpad
 dependencies:
@@ -68,21 +71,22 @@ devDependencies:
   eslint: ^8.0.0
 
 # dependencies.yaml / dependencies.yml - Alternative format
-# dependencies:
-#   react: ^18.0.0
-#   lodash: ^4.17.21
+# dependencies
+# react: ^18.0.0
+# lodash: ^4.17.21
 
 # pkgx.yaml / pkgx.yml - pkgx-specific
-# dependencies:
-#   python: ~3.11.0
-#   poetry: ^1.6.0
+# dependencies
+# python: ~3.11.0
+# poetry: ^1.6.0
 
 # .deps.yaml / .deps.yml - Hidden configuration
-# dependencies:
-#   bun: latest
+# dependencies
+# bun: latest
 ```
 
 #### GitHub Actions
+
 ```yaml
 # .github/workflows/ci.yml
 name: CI
@@ -91,16 +95,20 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+
       - uses: actions/checkout@v4 # ← Automatically updated
       - uses: oven-sh/setup-bun@v2 # ← Automatically updated
       - uses: actions/cache@v4.1.0 # ← Automatically updated
       - name: Install dependencies
+
         run: bun install
+
       - name: Run tests
+
         run: bun test
 ```
 
-All dependency files are parsed using the `ts-pkgx` library to ensure compatibility with the pkgx registry ecosystem. GitHub Actions are detected by parsing `uses:` statements in workflow files and checking for updates via the GitHub releases API.
+All dependency files are parsed using the `ts-pantry` library to ensure compatibility with the pkgx registry ecosystem. GitHub Actions are detected by parsing `uses:` statements in workflow files and checking for updates via the GitHub releases API.
 
 ### Project Structure Detection
 
@@ -114,36 +122,33 @@ const packageStructure = {
     'dependencies.yaml', // Alternative format
     'pkgx.yaml', // pkgx-specific
     '.deps.yaml', // Hidden config
-    'apps/*/package.json', // Monorepo apps
-    'packages/*/package.json', // Monorepo packages
-    'tools/*/package.json' // Tool packages
+    'apps/_/package.json', // Monorepo apps
+    'packages/_/package.json', // Monorepo packages
+    'tools/_/package.json' // Tool packages
   ]
 }
 ```
 
 ### Configuration
 
+Discovery needs no configuration. Buddy walks the repository, recognises every
+manifest it supports, and picks the package manager per project from whichever
+lock file is present. Directories such as `node_modules`, `dist`, `build` and
+`vendor` are never descended into.
+
+What you configure is what to leave alone:
+
 ```typescript
 export default {
   packages: {
-    // Package manager preference
-    manager: 'bun', // 'bun' | 'npm' | 'yarn' | 'pnpm'
-
-    // Discovery patterns
-    include: [
-      'package.json',
-      'apps/*/package.json',
-      'packages/*/package.json'
-    ],
-
-    // Exclude patterns
-    exclude: [
-      'node_modules/**/package.json',
-      'dist/**/package.json',
-      'build/**/package.json'
+    // Paths to skip, as globs relative to the repository root
+    ignorePaths: [
+      'examples/**',
+      'packages/test-*/**',
+      'apps/legacy/**'
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ## Package Analysis
@@ -154,29 +159,29 @@ Buddy provides detailed package analysis and information retrieval.
 
 ```bash
 # Get detailed package information
-buddy-bot info react
+buddy info react
 
 # Check if package exists
-buddy-bot exists @types/unknown-package
+buddy exists @types/unknown-package
 
 # Get all available versions
-buddy-bot versions typescript
+buddy versions typescript
 
 # Get latest version only
-buddy-bot latest vue
+buddy latest vue
 ```
 
 ### Dependency Analysis
 
 ```bash
 # Show package dependencies
-buddy-bot deps react
+buddy deps react
 
 # Compare versions
-buddy-bot compare react 17.0.0 18.0.0
+buddy compare react 17.0.0 18.0.0
 
 # Search for packages
-buddy-bot search "state management"
+buddy search "state management"
 ```
 
 ### Registry Integration
@@ -282,7 +287,7 @@ Platform requirements are automatically excluded from updates:
 {
   "require": {
     "php": "^8.1",              // ❌ Skipped (platform)
-    "ext-json": "*",             // ❌ Skipped (extension)
+    "ext-json": "_",             // ❌ Skipped (extension)
     "laravel/framework": "^10.0" // ✅ Updated
   }
 }
@@ -292,29 +297,45 @@ Platform requirements are automatically excluded from updates:
 
 Control which packages are managed by buddy.
 
-### Ignore Patterns
+### Ignore List
 
 ```typescript
 export default {
   packages: {
-    // Global ignore list
+    // Global ignore list — exact package names
     ignore: [
       '@types/node', // Keep Node types stable
       'react', // Manual React updates
-      'vue', // Manual Vue updates
-      '@internal/*', // Internal packages
-      'workspace:*' // Workspace packages
-    ],
-
-    // Ignore by pattern
-    ignorePatterns: [
-      '**/@types/**', // All type definitions
-      '**/eslint-*', // All ESLint packages
-      'babel-*' // All Babel packages
+      'vue' // Manual Vue updates
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
+
+`ignore` entries are compared by **exact name equality**. A glob such as
+`@types/*` matches no package at all, so it silently ignores nothing rather
+than failing loudly.
+
+### Ignore Patterns
+
+For whole families, use a rule: `matchPackages` accepts globs, and
+`enabled: false` drops every update it matches.
+
+```typescript
+export default {
+  packages: {
+    rules: [
+      { matchPackages: ['@internal/*'], enabled: false },
+      { matchPackages: ['@types/*'], enabled: false },
+      { matchPackages: ['eslint-*', 'babel-*'], enabled: false }
+    ]
+  }
+} satisfies BuddyConfig
+```
+
+The two lists behave differently on purpose, and the difference is easy to trip
+over: `ignore` is exact names, while the adjacent `ignorePaths` **does** take
+globs, because it matches file paths rather than package names.
 
 ### Include/Exclude by Scope
 
@@ -346,25 +367,22 @@ export default {
     groups: [
       {
         name: 'React Ecosystem',
-        packages: ['react', 'react-dom', '@types/react', '@types/react-dom'],
-        strategy: 'minor',
-        description: 'Core React framework and types'
+        patterns: ['react', 'react-dom', '@types/react', '@types/react-dom'],
+        strategy: 'minor'
       },
       {
         name: 'Testing Framework',
-        packages: ['jest', '@types/jest', 'jest-environment-jsdom'],
-        strategy: 'patch',
-        autoMerge: true
+        patterns: ['jest', '@types/jest', 'jest-environment-jsdom'],
+        strategy: 'patch'
       },
       {
         name: 'Build Tools',
-        packages: ['webpack', 'webpack-cli', 'webpack-dev-server'],
-        strategy: 'major',
-        reviewers: ['build-team']
+        patterns: ['webpack', 'webpack-cli', 'webpack-dev-server'],
+        strategy: 'major'
       }
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### Pattern-Based Groups
@@ -375,18 +393,17 @@ const patternGroupsConfig = {
     groups: [
       {
         name: 'Type Definitions',
-        pattern: '@types/*',
-        strategy: 'minor',
-        autoMerge: true
+        patterns: ['@types/*'],
+        strategy: 'minor'
       },
       {
         name: 'ESLint Ecosystem',
-        pattern: 'eslint*',
+        patterns: ['eslint*'],
         strategy: 'patch'
       },
       {
         name: 'Babel Plugins',
-        pattern: 'babel-*',
+        patterns: ['babel-*'],
         strategy: 'minor'
       }
     ]
@@ -410,14 +427,14 @@ export default {
       typescript: '~5.0.0' // Pin to TypeScript 5.0.x
     },
 
-    // Version ranges
-    ranges: {
-      'vue': '^3.0.0', // Vue 3.x only
-      '@angular/core': '^16.0.0 || ^17.0.0' // Multiple ranges
-    }
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
+
+`pin` takes any range the ecosystem understands, so holding a package inside a
+major series and expressing a floor use the same mechanism. To hold back a
+version series conditionally, use a rule with `matchCurrentVersion` instead —
+see [package rules](/advanced/scheduling#package-rules).
 
 ### Version Prefix Preservation
 
@@ -464,63 +481,40 @@ const customResolversConfig = {
 
 ## Monorepo Support
 
-Advanced support for monorepo package management.
+Monorepos need no configuration. Buddy walks the whole repository, finds every
+manifest at any depth, and groups the updates from all of them together — so a
+`typescript` bump appearing in six packages produces one pull request, not six.
 
-### Workspace Detection
+For Bun and npm workspaces, Buddy additionally runs `bun outdated --filter` per
+workspace package and merges those results with the root scan. pnpm catalogs in
+`pnpm-workspace.yaml` are read and updated where the version actually lives,
+rather than writing the `catalog:` protocol string over itself.
+
+To keep part of the tree out of scope, use `ignorePaths`:
 
 ```typescript
 export default {
   packages: {
-    workspaces: {
-      // Auto-detect workspaces
-      autoDetect: true,
-
-      // Manual workspace patterns
-      patterns: [
-        'packages/*',
-        'apps/*',
-        'tools/*'
-      ],
-
-      // Workspace-specific configuration
-      configs: {
-        'packages/ui': {
-          strategy: 'patch',
-          autoMerge: true
-        },
-        'apps/web': {
-          strategy: 'minor',
-          reviewers: ['frontend-team']
-        }
-      }
-    }
+    ignorePaths: ['apps/legacy/**', 'packages/test-*/**']
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
-### Cross-Workspace Dependencies
+To apply different settings to a directory, match on the manifest path with a
+rule:
 
 ```typescript
-const workspaceConfig = {
+export default {
   packages: {
-    workspaces: {
-      // Handle internal dependencies
-      internalDeps: {
-        strategy: 'workspace', // Use workspace protocol
-        autoUpdate: true, // Update internal refs
-        linkLocal: true // Link local packages
-      },
-
-      // Shared dependencies
-      sharedDeps: {
-        hoist: true, // Hoist common dependencies
-        dedupe: true, // Remove duplicates
-        align: true // Align versions across workspaces
-      }
-    }
+    rules: [
+      { matchFiles: ['packages/ui/**'], strategy: 'patch', autoMerge: true },
+      { matchFiles: ['apps/web/**'], strategy: 'minor', reviewers: ['frontend-team'] }
+    ]
   }
-}
+} satisfies BuddyConfig
 ```
+
+See [monorepos](/advanced/monorepo) for the full picture.
 
 ## Performance Optimization
 
@@ -656,29 +650,52 @@ All package management features are available via CLI.
 
 ```bash
 # Check package updates
-buddy-bot check react vue typescript
+buddy check react vue typescript
 
 # Get package information
-buddy-bot info @types/node --detailed
+buddy info @types/node
+
+# Machine-readable package information
+buddy info @types/node --json
 
 # Search packages
-buddy-bot search "ui component" --limit 10
+buddy search "ui component" --limit 10
 
 # Analyze dependencies
-buddy-bot deps react --depth 2
+buddy deps react
+
+# Include dev and peer dependencies
+buddy deps react --all
 ```
 
 ### Batch Operations
 
+`buddy update` runs over everything the scan found; it has no package or group
+filter of its own. Narrow it with a strategy, an ignore list, or a preview run:
+
 ```bash
-# Update multiple packages
-buddy-bot update --packages react,vue,typescript
+# Preview the pull requests without opening them
+buddy update --dry-run
 
-# Update by pattern
-buddy-bot update --pattern "@types/*"
+# Restrict this run to patch updates
+buddy update --strategy patch
 
-# Update by group
-buddy-bot update --group "React Ecosystem"
+# Skip named packages for this run
+buddy update --ignore react,vue
+```
+
+To scope a run to a group or a pattern, express it in config as a rule and let
+`buddy update` honour it:
+
+```typescript
+export default {
+  packages: {
+    rules: [
+      { matchPackages: ['@types/*'], groupName: 'Type Definitions' },
+      { matchEcosystems: ['docker'], enabled: false }
+    ]
+  }
+} satisfies BuddyConfig
 ```
 
 See [CLI Package Commands](/cli/package) for complete CLI reference.

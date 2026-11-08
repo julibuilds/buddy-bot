@@ -10,19 +10,31 @@ import {
 
 // Test the real functions - only mock external dependencies
 const mockResolveDependencyFile = mock()
-mock.module('ts-pkgx', () => ({
+mock.module('ts-pantry', () => ({
   resolveDependencyFile: mockResolveDependencyFile,
 }))
 
 const mockReadFileSync = mock()
 const mockExistsSync = mock()
+
+/**
+ * `mock.module` is process-global and permanent: whatever it installs is what
+ * every later test file gets too. Handing it the bare mocks broke suites that
+ * ran after this one — `existsSync` returned `undefined` everywhere once
+ * `afterEach` reset the mocks (which is how #1434's decline test failed on CI
+ * while passing alone). The replacement functions therefore delegate to the
+ * real fs except while this suite has armed them.
+ */
+let fsMocksArmed = false
 mock.module('node:fs', () => {
   // eslint-disable-next-line ts/no-require-imports
   const originalFs = require('node:fs')
   return {
     ...originalFs,
-    readFileSync: mockReadFileSync,
-    existsSync: mockExistsSync,
+    readFileSync: (...args: unknown[]) =>
+      fsMocksArmed ? mockReadFileSync(...args) : originalFs.readFileSync(...args),
+    existsSync: (...args: unknown[]) =>
+      fsMocksArmed ? mockExistsSync(...args) : originalFs.existsSync(...args),
   }
 })
 
@@ -36,9 +48,13 @@ describe('Dependency File Parser', () => {
     // Set up default mock behaviors
     mockExistsSync.mockReturnValue(true)
     mockReadFileSync.mockReturnValue('mock content')
+    fsMocksArmed = true
   })
 
   afterEach(() => {
+    // Hand the real fs back to everyone else before anything runs after us.
+    fsMocksArmed = false
+
     // Complete cleanup
     mockResolveDependencyFile.mockReset()
     mockReadFileSync.mockReset()
@@ -125,7 +141,7 @@ describe('Dependency File Parser', () => {
 devDependencies:
   typescript: ^5.0.0`
 
-    it('should parse dependency file using ts-pkgx', async () => {
+    it('should parse dependency file using ts-pantry', async () => {
       const mockResolvedDeps = {
         allDependencies: [
           { name: 'lodash', constraint: '^4.17.21' },
@@ -158,7 +174,7 @@ devDependencies:
       expect(mockResolveDependencyFile).toHaveBeenCalledWith('deps.yaml')
     })
 
-    it('should handle empty allDependencies array', async () => {
+    it('should fall back to YAML parser when allDependencies is empty', async () => {
       const mockResolvedDeps = {
         allDependencies: [],
       }
@@ -167,8 +183,9 @@ devDependencies:
 
       const result = await parseDependencyFile('deps.yaml', mockFileContent)
 
+      // When ts-pkgx returns empty results, the fallback YAML parser should find deps from content
       expect(result).toBeDefined()
-      expect(result?.dependencies).toHaveLength(0)
+      expect(result?.dependencies.length).toBeGreaterThan(0)
     })
 
     // Note: Fallback test removed because ts-pkgx only provides allDependencies,
@@ -209,13 +226,14 @@ devDependencies:
       expect(result?.dependencies[0].name).toBe('react')
     })
 
-    it('should handle null/undefined resolved dependencies', async () => {
+    it('should fall back to YAML parser when resolved dependencies is null', async () => {
       mockResolveDependencyFile.mockResolvedValue(null)
 
       const result = await parseDependencyFile('deps.yaml', mockFileContent)
 
+      // When ts-pkgx returns null, the fallback YAML parser should find deps from content
       expect(result).toBeDefined()
-      expect(result?.dependencies).toHaveLength(0)
+      expect(result?.dependencies.length).toBeGreaterThan(0)
     })
   })
 

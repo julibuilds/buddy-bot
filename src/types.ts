@@ -1,12 +1,48 @@
+import type { GitProviderName } from './git/provider'
+import type { Drift } from './scanner/resolution-drift'
+import type { LogLevel } from './utils/logger'
+
+// The provider contract lives beside its implementations in `src/git/`, and is
+// re-exported here so `import type { GitProvider } from '@buddysh/buddy'` keeps
+// working. `IMPLEMENTED_PROVIDERS` — not the type — is what gates a name from
+// reaching a workflow run.
+export type {
+  CheckRunResult,
+  GitProvider,
+  GitProviderName,
+  ListWorkflowRunsOptions,
+  ProviderBranch,
+  ProviderCapabilities,
+  ReviewSubmission,
+  ReviewThread,
+  ReviewSubmissionResult,
+  WorkflowRun,
+} from './git/provider'
+
+/** Advisory severity, ordered from least to most severe. */
+export type VulnerabilitySeverity = 'low' | 'moderate' | 'high' | 'critical'
+
 // Core configuration types
-export interface BuddyBotConfig {
-  /** Enable verbose logging */
+export interface BuddyConfig {
+  /** Enable verbose logging. Equivalent to `logLevel: 'debug'`. */
   verbose?: boolean
+
+  /**
+   * How much output to emit. Overrides {@link verbose} when both are set.
+   *
+   * Use `'silent'` when embedding buddy in another tool that owns its own
+   * output. Can also be set with `BUDDY_LOG_LEVEL`.
+   */
+  logLevel?: LogLevel
 
   /** Repository settings */
   repository?: {
-    /** Git provider (github, gitlab, etc.) */
-    provider: 'github' | 'gitlab' | 'bitbucket'
+    /**
+     * Git provider. Only `github` is implemented; `gitlab` and `bitbucket`
+     * type-check but are rejected at validation with a link to the issue
+     * tracking them, so a config typo cannot reach a workflow run.
+     */
+    provider: GitProviderName
     /** Repository owner/organization */
     owner: string
     /** Repository name */
@@ -15,6 +51,62 @@ export interface BuddyBotConfig {
     baseBranch?: string
     /** Access token for API operations */
     token?: string
+    /**
+     * REST API base URL. Defaults to `GITHUB_API_URL` when set (GitHub Actions
+     * exports it on both github.com and Enterprise Server runners), otherwise
+     * `https://api.github.com`. Set explicitly for GitHub Enterprise Server,
+     * e.g. `https://github.acme.com/api/v3`.
+     */
+    apiUrl?: string
+    /**
+     * Web base URL used for links in PR bodies and the dashboard. Defaults to
+     * `GITHUB_SERVER_URL`, otherwise `https://github.com`.
+     */
+    serverUrl?: string
+  }
+
+  /** Package registry endpoints, for private or self-hosted mirrors */
+  registries?: {
+    /** npm registry base URL (default: `.npmrc` `registry=`, else registry.npmjs.org) */
+    npm?: string
+    /** Per-scope npm registry overrides, keyed by scope including the `@` */
+    npmScopes?: Record<string, string>
+    /** Composer/Packagist base URL (default: packagist.org) */
+    composer?: string
+    /**
+     * Per-host container registry credentials, keyed by host
+     * (`ghcr.io`, `quay.io`, `123.dkr.ecr.us-east-1.amazonaws.com`).
+     *
+     * Secrets are referenced by environment variable name, never inlined, so
+     * a registry can be committed to the repository without committing the
+     * credential that reaches it. `ghcr.io` falls back to `GITHUB_TOKEN`
+     * automatically, so private GHCR images work in Actions with no config.
+     */
+    docker?: Record<string, {
+      username?: string
+      /** Environment variable holding the password */
+      passwordEnv?: string
+      /** Environment variable holding a pre-issued bearer token */
+      tokenEnv?: string
+    }>
+  }
+
+  /** Security advisory settings */
+  security?: {
+    /**
+     * Query the OSV.dev advisory database and flag dependencies with known
+     * vulnerabilities (default: true). Disable for fully offline runs.
+     */
+    enabled?: boolean
+    /**
+     * Move updates that resolve a known advisory to the front of the queue so
+     * they survive the `maxPRsPerRun` cap (default: true).
+     */
+    prioritize?: boolean
+    /** Label applied to PRs that resolve an advisory (default: `security`) */
+    label?: string
+    /** Minimum severity to act on (default: `low`, i.e. everything) */
+    minimumSeverity?: VulnerabilitySeverity
   }
 
   /** Update scheduling and strategies */
@@ -43,7 +135,255 @@ export interface BuddyBotConfig {
     excludeMajor?: boolean
     /** Respect "latest" and "*" version indicators (default: true) */
     respectLatest?: boolean
+    /**
+     * Propose bumps to the runtimes declared under `engines` (default: false).
+     *
+     * Off by default because an engine constraint is a deployment decision
+     * rather than a dependency one: raising `node: '>=20'` to `'>=22'` is a
+     * statement about every environment the project runs in, not just the
+     * lockfile. The constraint's shape is preserved — a floor stays a floor.
+     */
+    engines?: boolean
+    /** Minimum age in minutes that a package version must have before installation (default: 0) */
+    minimumReleaseAge?: number
+    /** Package names to exclude from minimum release age requirement */
+    minimumReleaseAgeExclude?: string[]
+    /**
+     * Conditional rules applied to matching updates.
+     *
+     * Rules are evaluated in order and later matches override earlier ones
+     * per field, so a broad rule can set a default and a narrow one refine it.
+     * See https://buddy.sh/config#package-rules
+     */
+    rules?: import('./rules/engine').PackageRule[]
+    /**
+     * Report packages held below their latest version by a range declared
+     * elsewhere in the dependency tree (default: true).
+     *
+     * These cannot be fixed by updating this repository — somebody has to
+     * widen a range in the dependant — so they are surfaced on the dashboard
+     * rather than turned into pull requests.
+     */
+    detectResolutionDrift?: boolean
   }
+
+  /**
+   * Pre-merge gates and post-merge actions.
+   *
+   * The deterministic gates need no AI; the assertion gates degrade to a
+   * neutral result rather than a pass when no provider is configured, so a
+   * check that could not run never reads as one that succeeded.
+   */
+  gates?: {
+    /** Require a conventional-commit pull request title */
+    titleFormat?: 'off' | 'warning' | 'error'
+    /** Require a description, optionally with named sections */
+    description?: { mode: 'off' | 'warning' | 'error', requireSections?: string[] }
+    /** Block dependencies by licence, advisory or deprecation */
+    dependencyGate?: {
+      mode: 'off' | 'warning' | 'error'
+      licenseAllowlist?: string[]
+      blockVulnerable?: boolean
+      blockDeprecated?: boolean
+      /** Block base images whose release cycle no longer gets security fixes */
+      blockEol?: boolean
+    }
+    /** Check that a change addresses the issue it says it closes */
+    linkedIssue?: 'off' | 'warning' | 'error'
+    /** Repository-specific natural-language assertions */
+    custom?: Array<{
+      name: string
+      assertion: string
+      mode?: 'off' | 'warning' | 'error'
+    }>
+    /** What to do once a pull request merges */
+    postMerge?: {
+      changelog?: { enabled?: boolean, path?: string }
+      commentOnIssues?: boolean
+      refreshDashboard?: boolean
+    }
+  }
+
+  /**
+   * Comment posted on newly opened issues, offering Buddy's help.
+   *
+   * Both actions are opt-in checkboxes: an issue is a request for a
+   * conversation as often as for code, and a bot that opens a pull request
+   * against every new issue is one a maintainer turns off in a week.
+   */
+  issues?: {
+    /** Post the quick-links comment on new issues (default: false) */
+    quickLinks?: boolean
+    /** Include dependency context when the issue names a known package */
+    dependencyContext?: boolean
+  }
+
+  /**
+   * Scheduled dependency-health and activity reports.
+   *
+   * The report is computed from scan results and pull request history, so it
+   * works with no AI provider. A configured provider adds a narrative around
+   * the numbers; it never produces them.
+   */
+  reports?: {
+    /**
+     * Publish the scheduled report (default: false).
+     *
+     * Governs only the run the generated workflow starts: a cron trigger
+     * cannot read this file, so the workflow passes `--scheduled` and the
+     * command declines to publish unless this is `true`. A person running
+     * `buddy report --publish` by hand has already decided.
+     *
+     * The cadence itself lives in the workflow's `schedule:` block — there
+     * is no config key for it, because nothing at trigger time could read one.
+     */
+    enabled?: boolean
+    /** Reporting window (default: `30d`) */
+    period?: '7d' | '30d' | '90d'
+    /** What the AI narrative should emphasise */
+    prompt?: string
+    /** Title of the report issue (default: `Dependency Report`) */
+    title?: string
+    /** Labels applied to the report issue */
+    labels?: string[]
+  }
+
+  /**
+   * Static analysis settings.
+   *
+   * Analyzers run whether or not an AI provider is configured, so a repository
+   * with no key still gets secret scanning, workflow auditing and whatever
+   * external linters the runner has installed.
+   */
+  analysis?: {
+    /** Turn all analyzers off (default: true, they are cheap and local) */
+    enabled?: boolean
+    /**
+     * Per-analyzer switches, keyed by name: `secrets`, `github-actions`,
+     * `syntax`, `linter`, `actionlint`, `shellcheck`, `hadolint`,
+     * `markdownlint`. Absent means enabled.
+     */
+    tools?: Record<string, boolean>
+  }
+
+  /**
+   * AI provider settings.
+   *
+   * Every AI-powered feature is off unless a provider key is available, and
+   * degrades to a no-op rather than failing the run — the dependency bot works
+   * exactly as before with no AI configured.
+   */
+  ai?: {
+    /** Turn all AI features off even when a key is present */
+    enabled?: boolean
+    /**
+     * Which provider to use. Omitted, the first provider with an available API
+     * key is chosen, in the order anthropic, openai, google, openrouter.
+     */
+    provider?: 'anthropic' | 'openai' | 'google' | 'openrouter' | 'openai-compatible'
+    /**
+     * Model alias or concrete ID. Aliases (`opus`, `sonnet`, `haiku`) resolve
+     * to current Anthropic models; every other provider needs a concrete ID.
+     * Overridable per run with `BUDDY_MODEL`.
+     */
+    model?: string
+    /** Reasoning depth to request (default: provider default) */
+    effort?: 'low' | 'medium' | 'high'
+    /** Environment variable holding the API key, when not the provider default */
+    apiKeyEnv?: string
+    /** Base URL override, for gateways and OpenAI-compatible endpoints */
+    baseUrl?: string
+    /**
+     * Hard ceiling on output tokens generated per run. Once reached, further
+     * requests fail rather than spending more.
+     */
+    maxTokensPerRun?: number
+
+    /** AI-assisted major version upgrades */
+    majorUpgrades?: {
+      /** Analyse major updates (default: false — opt in, it costs tokens) */
+      enabled?: boolean
+      /**
+       * Attempt the migration rather than only analysing it (default: false).
+       * A wrong migration is far more expensive than a missing one.
+       */
+      autoMigrate?: boolean
+      /** Open as a draft below this confidence (default: `high`) */
+      draftBelowConfidence?: 'high' | 'medium'
+      /** Maximum agent attempts per upgrade */
+      maxAttempts?: number
+      /** Globs limiting which packages are analysed; empty means all majors */
+      packages?: string[]
+    }
+
+    /** AI pull request review settings */
+    review?: {
+      /**
+       * Set to `false` to switch AI review off for this repository, including
+       * when someone asks with `@buddy review`.
+       *
+       * Leaving it unset does not mean off: review already requires both a
+       * workflow trigger and a provider key, so this is the override, not the
+       * opt-in.
+       */
+      enabled?: boolean
+      /**
+       * How thorough to be. `chill` reports only confident defects;
+       * `assertive` also reports lower-confidence findings, marked so they can
+       * be filtered downstream.
+       */
+      profile?: 'chill' | 'assertive'
+      /** Review draft pull requests on an automatic trigger (default: false) */
+      drafts?: boolean
+      /** Review automatically on open and push (default: true) */
+      autoReview?: boolean
+      /**
+       * Skip pull requests whose title contains any of these, e.g. `wip`.
+       * Matched case-insensitively as a substring.
+       */
+      ignoreTitleKeywords?: string[]
+      /** Skip pull requests opened by these users */
+      ignoreUsernames?: string[]
+      /** Request changes at this severity, or never (default: never) */
+      requestChangesOn?: 'never' | 'critical'
+      /** Post only the summary and walkthrough, no inline findings */
+      summaryOnly?: boolean
+      /**
+       * Gitignore-style path filters, applied on top of the built-in
+       * exclusions for lock files and build output. `!` excludes.
+       */
+      pathFilters?: string[]
+      /**
+       * Guidance applied when reviewing files matching a glob, e.g.
+       * `{ path: 'src/security/**', instructions: 'Flag any new network call' }`.
+       */
+      pathInstructions?: Array<{ path: string, instructions: string }>
+      /**
+       * Files describing the repository's conventions, read from the base
+       * branch. Set to `false` to disable, or list paths to override the
+       * defaults (CLAUDE.md, AGENTS.md, .cursorrules and similar).
+       */
+      guidelineFiles?: string[] | false
+      /** Global guidance prepended to every review */
+      instructions?: string
+    }
+  }
+
+  /**
+   * Where to send notifications about what buddy did.
+   *
+   * Credentials are referenced by environment variable name, never inlined,
+   * so a destination can be committed without committing its credential.
+   */
+  notifications?: {
+    slack?: { webhookEnv?: string, events?: string[] }
+    discord?: { webhookEnv?: string, events?: string[] }
+    /** Signed JSON POSTs to your own endpoints */
+    webhooks?: Array<{ url: string, secretEnv?: string, events?: string[] }>
+  }
+
+  /** Maximum number of PRs to create per workflow run (default: 10) */
+  maxPRsPerRun?: number
 
   /** PR generation settings */
   pullRequest?: {
@@ -57,14 +397,51 @@ export interface BuddyBotConfig {
     autoMerge?: {
       enabled: boolean
       strategy: 'merge' | 'squash' | 'rebase'
+      /**
+       * Which updates may merge without review: `patch-only`, `minor-only`,
+       * `security-only` or `all`. A PR qualifies when any listed condition
+       * accepts it.
+       *
+       * An empty or missing list means nothing auto-merges — the safe reading
+       * of a half-written config.
+       */
       conditions?: string[]
+      /**
+       * Require passing checks before merging (default: true).
+       *
+       * Only meaningful on repositories without branch protection, where
+       * buddy merges directly instead of handing the PR to GitHub's own
+       * auto-merge queue.
+       */
+      requireGreenCI?: boolean
+      /** Label that suppresses auto-merge on a PR (default: `no-auto-merge`) */
+      optOutLabel?: string
     }
     /** Reviewers to assign */
     reviewers?: string[]
+    /**
+     * GitHub teams to request review from, by team slug (without the
+     * organisation prefix).
+     */
+    teamReviewers?: string[]
     /** Assignees to assign */
     assignees?: string[]
     /** Labels to add */
     labels?: string[]
+  }
+
+  /** Release notes configuration */
+  releaseNotes?: {
+    /** Enable release notes in PRs (default: true) */
+    enabled?: boolean
+    /** Sanitize GitHub references (#123, issue/PR URLs) to prevent spam notifications (default: true) */
+    sanitizeReferences?: boolean
+    /** Maximum number of releases to show per package (default: 3) */
+    maxReleases?: number
+    /** Maximum character length per release body (default: 1000) */
+    maxBodyLength?: number
+    /** Include compare links between versions (default: true) */
+    includeCompareLinks?: boolean
   }
 
   /** Workflow generation settings */
@@ -133,10 +510,18 @@ export interface BuddyBotConfig {
     showDeprecatedDependencies?: boolean
     /** Issue number to update (if it exists) */
     issueNumber?: number
+    /**
+     * Pin the dashboard issue to the top of the repository's issue list
+     * (default: false).
+     *
+     * GitHub allows at most three pinned issues per repository; when that
+     * limit is already reached the dashboard is still created, just unpinned.
+     */
+    pin?: boolean
   }
 }
 
-export type BuddyBotOptions = Partial<BuddyBotConfig>
+export type BuddyOptions = Partial<BuddyConfig>
 
 export interface PackageGroup {
   /** Group name */
@@ -152,7 +537,7 @@ export interface PackageFile {
   /** File path relative to repository root */
   path: string
   /** Type of package file */
-  type: 'package.json' | 'bun.lockb' | 'package-lock.json' | 'yarn.lock' | 'pnpm-lock.yaml' | 'deps.yaml' | 'deps.yml' | 'dependencies.yaml' | 'dependencies.yml' | 'pkgx.yaml' | 'pkgx.yml' | '.deps.yaml' | '.deps.yml' | 'composer.json' | 'composer.lock' | 'github-actions'
+  type: 'package.json' | 'bun.lock' | 'bun.lockb' | 'package-lock.json' | 'yarn.lock' | 'pnpm-lock.yaml' | 'deps.yaml' | 'deps.yml' | 'dependencies.yaml' | 'dependencies.yml' | 'pkgx.yaml' | 'pkgx.yml' | '.deps.yaml' | '.deps.yml' | 'composer.json' | 'composer.lock' | 'github-actions' | 'Dockerfile' | 'build.zig.zon' | 'pantry.lock'
   /** Raw file content */
   content: string
   /** Parsed dependencies */
@@ -165,11 +550,13 @@ export interface Dependency {
   /** Current version or range */
   currentVersion: string
   /** Dependency type */
-  type: 'dependencies' | 'devDependencies' | 'peerDependencies' | 'optionalDependencies' | 'require' | 'require-dev' | 'github-actions'
+  type: 'dependencies' | 'devDependencies' | 'peerDependencies' | 'optionalDependencies' | 'require' | 'require-dev' | 'github-actions' | 'docker-image' | 'zig-dependencies' | 'python' | 'rust' | 'go' | 'ruby' | 'engines' | 'catalog'
   /** File where dependency is defined */
   file: string
   /** Line number in file */
   line?: number
+  /** Additional metadata (e.g., URL, hash for Zig dependencies) */
+  metadata?: Record<string, string>
 }
 
 export interface PackageUpdate {
@@ -182,17 +569,63 @@ export interface PackageUpdate {
   /** Update type */
   updateType: 'major' | 'minor' | 'patch'
   /** Dependency type */
-  dependencyType: 'dependencies' | 'devDependencies' | 'peerDependencies' | 'optionalDependencies' | 'require' | 'require-dev' | 'github-actions'
+  dependencyType: Dependency['type']
   /** Source file */
   file: string
   /** Package metadata from registry */
   metadata?: PackageMetadata
+  /**
+   * Ecosystem-specific values resolved while detecting the update, for
+   * ecosystems whose manifests record more than a version.
+   *
+   * Zig pins a tarball URL alongside a content-addressed hash, and both have
+   * to change together or `zig build` fails verification. pnpm catalogs need
+   * the catalog name, because two catalogs may name the same package at
+   * different versions and each has to keep its own.
+   */
+  resolved?: {
+    /** Replacement source URL */
+    url?: string
+    /** Replacement integrity hash */
+    hash?: string
+    /** pnpm catalog the entry belongs to */
+    catalog?: string
+    /**
+     * Commit a SHA-pinned GitHub Action moves to: the commit `newVersion`
+     * tags. The pin stays a SHA; only its `# vX.Y.Z` comment names the tag.
+     */
+    sha?: string
+  }
   /** Release notes URL */
   releaseNotesUrl?: string
   /** Changelog URL */
   changelogUrl?: string
   /** Homepage URL */
   homepage?: string
+  /**
+   * Known advisories affecting {@link currentVersion} that {@link newVersion}
+   * resolves. Populated by the advisory service when `security.enabled`.
+   */
+  securityAdvisories?: SecurityAdvisory[]
+}
+
+/**
+ * A known vulnerability affecting a specific dependency version, as reported
+ * by the OSV.dev aggregated advisory database.
+ */
+export interface SecurityAdvisory {
+  /** Primary advisory identifier, e.g. `GHSA-xxxx-yyyy-zzzz` */
+  id: string
+  /** Related identifiers such as CVE numbers */
+  aliases: string[]
+  /** One-line summary of the vulnerability */
+  summary: string
+  /** Normalized severity */
+  severity: VulnerabilitySeverity
+  /** Advisory detail page */
+  url?: string
+  /** First version that is not affected, when the advisory states one */
+  fixedVersion?: string
 }
 
 export interface PackageMetadata {
@@ -222,51 +655,6 @@ export interface PackageMetadata {
   devDependencies?: Record<string, string>
   /** Peer dependencies */
   peerDependencies?: Record<string, string>
-}
-
-// Git and PR types
-export interface GitProvider {
-  /** Create a new branch */
-  createBranch: (branchName: string, baseBranch: string) => Promise<void>
-
-  /** Commit changes to branch */
-  commitChanges: (branchName: string, message: string, files: FileChange[]) => Promise<void>
-
-  /** Create pull request */
-  createPullRequest: (options: PullRequestOptions) => Promise<PullRequest>
-
-  /** Get existing pull requests */
-  getPullRequests: (state?: 'open' | 'closed' | 'all') => Promise<PullRequest[]>
-
-  /** Update pull request */
-  updatePullRequest: (prNumber: number, options: Partial<PullRequestOptions>) => Promise<PullRequest>
-
-  /** Close pull request */
-  closePullRequest: (prNumber: number) => Promise<void>
-
-  /** Create comment on pull request */
-  createComment: (prNumber: number, comment: string) => Promise<void>
-
-  /** Merge pull request */
-  mergePullRequest: (prNumber: number, strategy?: 'merge' | 'squash' | 'rebase') => Promise<void>
-
-  /** Delete a branch */
-  deleteBranch: (branchName: string) => Promise<void>
-
-  /** Create GitHub issue */
-  createIssue: (options: IssueOptions) => Promise<Issue>
-
-  /** Get existing issues */
-  getIssues: (state?: 'open' | 'closed' | 'all') => Promise<Issue[]>
-
-  /** Update issue */
-  updateIssue: (issueNumber: number, options: Partial<IssueOptions>) => Promise<Issue>
-
-  /** Close issue */
-  closeIssue: (issueNumber: number) => Promise<void>
-
-  /** Unpin issue - Note: GitHub REST API does not support pinning issues programmatically */
-  unpinIssue: (issueNumber: number) => Promise<void>
 }
 
 export interface FileChange {
@@ -401,6 +789,60 @@ export interface UpdateGroup {
   body: string
 }
 
+/**
+ * A single dependency change recorded in a pull request's metadata manifest.
+ *
+ * Field names are deliberately short: the manifest is embedded in every PR
+ * body and competes with release notes for GitHub's 65,536 character limit.
+ */
+export interface PRManifestUpdate {
+  /** Package name */
+  name: string
+  /** Version or range before the update */
+  current: string
+  /** Version or range the PR moves to */
+  target: string
+  /** Semver impact of the change. Omitted from size-reduced manifests. */
+  type?: 'major' | 'minor' | 'patch'
+  /** Manifest file the change applies to */
+  file: string
+  /**
+   * Where in the manifest the dependency is declared. Omitted from
+   * size-reduced manifests.
+   */
+  dependencyType?: string
+}
+
+/**
+ * Machine-readable description of what a buddy pull request changes,
+ * embedded in the PR body as an HTML comment.
+ *
+ * Rebasing and auto-closing read this instead of re-parsing the rendered
+ * markdown tables, so PR body formatting can change freely without breaking
+ * PR lifecycle logic.
+ */
+export interface PRManifest {
+  /** Manifest schema version, for forward compatibility */
+  schemaVersion: number
+  /** Dependency changes contained in the PR */
+  updates: PRManifestUpdate[]
+  /** Update group that produced the PR */
+  group?: string
+  /** Update strategy in effect when the PR was generated */
+  strategy?: string
+  /** Head branch the PR was opened from */
+  branch?: string
+  /** ISO timestamp of generation */
+  generatedAt?: string
+  /**
+   * Set when the update list was shortened to keep the manifest within its
+   * size ceiling. Consumers that need the complete set — rebase group
+   * matching, for one — must treat a truncated manifest as unusable rather
+   * than acting on a partial view.
+   */
+  truncated?: boolean
+}
+
 export interface DashboardData {
   /** Open pull requests */
   openPRs: PullRequest[]
@@ -415,6 +857,14 @@ export interface DashboardData {
   }
   /** Deprecated dependencies found */
   deprecatedDependencies?: DeprecatedDependency[]
+  /** Dependencies with known, unresolved security advisories */
+  vulnerableDependencies?: VulnerableDependency[]
+  /**
+   * Packages held below their latest version by a range declared elsewhere in
+   * the dependency tree. Reported rather than turned into pull requests: the
+   * fix belongs in another repository.
+   */
+  cappedDependencies?: Drift[]
   /** Repository information */
   repository: {
     owner: string
@@ -423,6 +873,20 @@ export interface DashboardData {
   }
   /** Last update timestamp */
   lastUpdated: Date
+}
+
+/** A dependency version with one or more known advisories against it. */
+export interface VulnerableDependency {
+  /** Package name */
+  name: string
+  /** Version currently declared in the repository */
+  currentVersion: string
+  /** Ecosystem the advisory database matched, e.g. `npm` */
+  ecosystem: string
+  /** File where the dependency is declared */
+  file: string
+  /** Advisories affecting {@link currentVersion} */
+  advisories: SecurityAdvisory[]
 }
 
 export interface DeprecatedDependency {

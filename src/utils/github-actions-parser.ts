@@ -1,6 +1,8 @@
-/* eslint-disable no-console */
 import type { Dependency, PackageFile, PackageUpdate } from '../types'
 import process from 'node:process'
+import { getGitHubApiUrl } from './endpoints'
+import { fetchWithTimeout } from './http'
+import { getDefaultLogger } from './logger'
 
 /**
  * Check if a file path is a GitHub Actions workflow file
@@ -50,13 +52,22 @@ export async function parseGitHubActionsFile(filePath: string, content: string):
           }
 
           // Clean version by removing comments and extra whitespace
-          const version = versionRaw.split('#')[0].trim()
+          const [versionPart, ...commentParts] = versionRaw.split('#')
+          const version = versionPart.trim()
 
-          const actionDep = {
+          const actionDep: Dependency = {
             name: actionName.trim(),
             currentVersion: version,
             type: 'github-actions' as const,
             file: filePath,
+          }
+
+          // A SHA pin's version lives in its comment (`@<sha> # v1.2.3`). Kept
+          // so the update check compares versions rather than a SHA against a
+          // tag, which never match and would rewrite the pin to a mutable tag.
+          if (isCommitSha(version)) {
+            const pinnedVersion = commentParts.join('#').trim().split(/\s+/)[0]
+            actionDep.metadata = pinnedVersion ? { pinnedSha: version, pinnedVersion } : { pinnedSha: version }
           }
 
           // Only add if we don't already have this action@version combination for this file
@@ -82,9 +93,19 @@ export async function parseGitHubActionsFile(filePath: string, content: string):
     }
   }
   catch (error) {
-    console.warn(`Failed to parse GitHub Actions file ${filePath}:`, error)
+    getDefaultLogger().warn(`Failed to parse GitHub Actions file ${filePath}:`, error)
     return null
   }
+}
+
+/** A full 40-character commit SHA, the only immutable way to pin an action. */
+export function isCommitSha(ref: string): boolean {
+  return /^[0-9a-f]{40}$/i.test(ref)
+}
+
+/** `v1.2.3` and `1.2.3` name the same release. */
+export function sameActionVersion(a: string, b: string): boolean {
+  return a.replace(/^v/i, '') === b.replace(/^v/i, '')
 }
 
 /**
@@ -106,6 +127,19 @@ export async function updateGitHubActionsFile(
       // Clean action name (remove any extra info)
       const cleanActionName = update.name.replace(/\s*\(.*\)$/, '')
 
+      const escapedName = cleanActionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+      // A SHA pin moves to the commit the new tag names, and its comment to
+      // the tag, so the reference stays immutable.
+      if (update.resolved?.sha) {
+        const pinPattern = new RegExp(
+          `((?:^\\s*-\\s*)?uses:\\s*["\']?)(${escapedName})@(${update.currentVersion})(["\']?)([ \\t]*#[^\\n]*)?`,
+          'gm',
+        )
+        updatedContent = updatedContent.replace(pinPattern, `$1$2@${update.resolved.sha}$4 # ${update.newVersion}`)
+        continue
+      }
+
       // Create regex to match the action usage
       // Matches: uses: action-name@old-version (with optional quotes and dash)
       // This handles: "uses: action@version", "- uses: action@version", etc.
@@ -123,7 +157,7 @@ export async function updateGitHubActionsFile(
     return updatedContent
   }
   catch (error) {
-    console.warn(`Failed to update GitHub Actions file ${filePath}:`, error)
+    getDefaultLogger().warn(`Failed to update GitHub Actions file ${filePath}:`, error)
     return content
   }
 }
@@ -163,11 +197,41 @@ export async function generateGitHubActionsUpdates(updates: PackageUpdate[]): Pr
       }
     }
     catch (error) {
-      console.warn(`Failed to generate updates for GitHub Actions file ${filePath}:`, error)
+      getDefaultLogger().warn(`Failed to generate updates for GitHub Actions file ${filePath}:`, error)
     }
   }
 
   return fileUpdates
+}
+
+/**
+ * The commit a tag of an action's repository points at, so a SHA pin can move
+ * to a newer release without becoming a mutable tag reference. Annotated tags
+ * are peeled by the commits endpoint. Null when the tag cannot be resolved.
+ */
+export async function fetchActionTagCommit(actionName: string, tag: string): Promise<string | null> {
+  const [owner, repo] = actionName.split('/')
+  if (!owner || !repo)
+    return null
+
+  const headers: Record<string, string> = {
+    'Accept': 'application/vnd.github.v3+json',
+    'User-Agent': 'buddy',
+  }
+  const token = process.env.BUDDY_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN
+  if (token)
+    headers.Authorization = `Bearer ${token}`
+
+  try {
+    const response = await fetchWithTimeout(`${getGitHubApiUrl()}/repos/${owner}/${repo}/commits/${encodeURIComponent(tag)}`, { headers })
+    if (!response.ok)
+      return null
+    const commit = await response.json() as { sha?: string }
+    return commit.sha && isCommitSha(commit.sha) ? commit.sha : null
+  }
+  catch {
+    return null
+  }
 }
 
 /**
@@ -177,118 +241,135 @@ export async function fetchLatestActionVersion(actionName: string): Promise<stri
   try {
     // GitHub Actions are typically in the format owner/repo
     if (!actionName.includes('/')) {
-      console.log(`⚠️ Invalid action name format: ${actionName}`)
+      getDefaultLogger().info(`⚠️ Invalid action name format: ${actionName}`)
       return null
     }
 
     const [owner, repo] = actionName.split('/')
-    console.log(`🔍 Fetching latest version for ${owner}/${repo}`)
+    getDefaultLogger().info(`🔍 Fetching latest version for ${owner}/${repo}`)
 
     // Prepare headers with authentication if available
     const headers: Record<string, string> = {
       'Accept': 'application/vnd.github.v3+json',
-      'User-Agent': 'buddy-bot',
+      'User-Agent': 'buddy',
     }
 
-    // Add authentication if GitHub token is available
-    const token = process.env.GITHUB_TOKEN
+    // Authenticate when possible: anonymous GitHub API access is capped at 60
+    // requests/hour, which a workflow scanning many actions exhausts quickly.
+    const token = process.env.BUDDY_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN
     if (token) {
       headers.Authorization = `Bearer ${token}`
     }
 
+    const apiUrl = getGitHubApiUrl()
+
     // First try to get the latest release
-    console.log(`📡 Trying latest release for ${owner}/${repo}`)
-    const latestResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
+    getDefaultLogger().info(`📡 Trying latest release for ${owner}/${repo}`)
+    const latestResponse = await fetchWithTimeout(`${apiUrl}/repos/${owner}/${repo}/releases/latest`, {
       headers,
     })
 
     if (latestResponse.ok) {
       const release = await latestResponse.json() as { tag_name?: string }
       if (release.tag_name) {
-        console.log(`✅ Found latest release: ${release.tag_name}`)
+        getDefaultLogger().info(`✅ Found latest release: ${release.tag_name}`)
         return release.tag_name
       }
     }
     else {
-      console.log(`⚠️ Latest release not found: ${latestResponse.status} ${latestResponse.statusText}`)
+      getDefaultLogger().info(`⚠️ Latest release not found: ${latestResponse.status} ${latestResponse.statusText}`)
     }
 
     // If latest release fails or doesn't exist, try to get all releases
     // This helps with actions that don't use the latest tag or have different versioning
-    console.log(`📡 Trying all releases for ${owner}/${repo}`)
-    const releasesResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=10`, {
+    getDefaultLogger().info(`📡 Trying all releases for ${owner}/${repo}`)
+    const releasesResponse = await fetchWithTimeout(`${apiUrl}/repos/${owner}/${repo}/releases?per_page=10`, {
       headers,
     })
 
     if (releasesResponse.ok) {
-      const releases = await releasesResponse.json() as Array<{ tag_name?: string, published_at?: string }>
-      console.log(`📋 Found ${releases.length} releases`)
+      const releases = await releasesResponse.json()
 
-      // Filter out pre-releases and sort by published date
-      const stableReleases = releases
-        .filter(release => release.tag_name && !release.tag_name.includes('-'))
-        .sort((a, b) => {
-          const dateA = a.published_at ? new Date(a.published_at).getTime() : 0
-          const dateB = b.published_at ? new Date(b.published_at).getTime() : 0
-          return dateB - dateA // Sort descending (newest first)
-        })
+      // Ensure we have an array
+      if (!Array.isArray(releases)) {
+        getDefaultLogger().info(`⚠️ Unexpected releases response format (expected array)`)
+      }
+      else {
+        getDefaultLogger().info(`📋 Found ${releases.length} releases`)
 
-      if (stableReleases.length > 0) {
-        console.log(`✅ Found latest stable release: ${stableReleases[0].tag_name}`)
-        return stableReleases[0].tag_name || null
+        // Filter out pre-releases and sort by published date
+        const stableReleases = releases
+          .filter((release: any) => release.tag_name && !release.tag_name.includes('-'))
+          .sort((a: any, b: any) => {
+            const dateA = a.published_at ? new Date(a.published_at).getTime() : 0
+            const dateB = b.published_at ? new Date(b.published_at).getTime() : 0
+            return dateB - dateA // Sort descending (newest first)
+          })
+
+        if (stableReleases.length > 0) {
+          getDefaultLogger().info(`✅ Found latest stable release: ${stableReleases[0].tag_name}`)
+          return stableReleases[0].tag_name || null
+        }
       }
     }
     else {
-      console.log(`⚠️ Releases not found: ${releasesResponse.status} ${releasesResponse.statusText}`)
+      getDefaultLogger().info(`⚠️ Releases not found: ${releasesResponse.status} ${releasesResponse.statusText}`)
     }
 
     // If we still can't find a release, try to get tags
-    console.log(`📡 Trying tags for ${owner}/${repo}`)
-    const tagsResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/tags?per_page=10`, {
+    getDefaultLogger().info(`📡 Trying tags for ${owner}/${repo}`)
+    const tagsResponse = await fetchWithTimeout(`${apiUrl}/repos/${owner}/${repo}/tags?per_page=10`, {
       headers,
     })
 
     if (tagsResponse.ok) {
-      const tags = await tagsResponse.json() as Array<{ name?: string }>
-      console.log(`📋 Found ${tags.length} tags`)
+      const tags = await tagsResponse.json()
 
-      // Filter out pre-releases and find the latest stable tag
-      const stableTags = tags
-        .filter(tag => tag.name && !tag.name.includes('-'))
-        .map(tag => tag.name!)
-        .sort((a, b) => {
-          // Simple version comparison for tags
-          // Remove 'v' prefix if present for proper number parsing
-          const aClean = a.replace(/^v/, '')
-          const bClean = b.replace(/^v/, '')
+      // Ensure we have an array
+      if (!Array.isArray(tags)) {
+        getDefaultLogger().info(`⚠️ Unexpected tags response format (expected array)`)
+      }
+      else {
+        getDefaultLogger().info(`📋 Found ${tags.length} tags`)
 
-          const aParts = aClean.split('.').map(Number)
-          const bParts = bClean.split('.').map(Number)
+        // Filter out pre-releases and find the latest stable tag
+        const stableTags = tags
+          .filter((tag: any) => tag.name && !tag.name.includes('-'))
+          .map((tag: any) => tag.name!)
+          .sort((a: string, b: string) => {
+            // Simple version comparison for tags
+            // Remove 'v' prefix if present for proper number parsing
+            const aClean = a.replace(/^v/, '')
+            const bClean = b.replace(/^v/, '')
 
-          for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
-            const aPart = aParts[i] || 0
-            const bPart = bParts[i] || 0
-            if (aPart !== bPart) {
-              return bPart - aPart // Sort descending
+            const aParts = aClean.split('.').map(Number)
+            const bParts = bClean.split('.').map(Number)
+
+            for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+              const aPart = aParts[i] || 0
+              const bPart = bParts[i] || 0
+              if (aPart !== bPart) {
+                return bPart - aPart // Sort descending
+              }
             }
-          }
-          return 0
-        })
+            return 0
+          })
 
-      if (stableTags.length > 0) {
-        console.log(`✅ Found latest stable tag: ${stableTags[0]}`)
-        return stableTags[0]
+        if (stableTags.length > 0) {
+          getDefaultLogger().info(`✅ Found latest stable tag: ${stableTags[0]}`)
+          return stableTags[0]
+        }
       }
     }
     else {
-      console.log(`⚠️ Tags not found: ${tagsResponse.status} ${tagsResponse.statusText}`)
+      getDefaultLogger().info(`⚠️ Tags not found: ${tagsResponse.status} ${tagsResponse.statusText}`)
     }
 
-    console.log(`❌ No version found for ${actionName}`)
+    getDefaultLogger().info(`❌ No version found for ${actionName}`)
     return null
   }
   catch (error) {
-    console.warn(`Failed to fetch latest version for ${actionName}:`, error)
+    getDefaultLogger().warn(`Failed to fetch latest version for ${actionName}:`, error)
     return null
   }
 }

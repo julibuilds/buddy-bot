@@ -1,18 +1,19 @@
 # Migrating from Renovate
 
-This guide provides detailed instructions for migrating from Renovate to Buddy Bot, including configuration mappings and best practices.
+This guide provides detailed instructions for migrating from Renovate to Buddy, including configuration mappings and best practices.
 
 ## Automated Migration
 
-Buddy Bot can automatically detect and migrate most Renovate configurations:
+Buddy can automatically detect and migrate most Renovate configurations:
 
 ```bash
-buddy-bot setup
+buddy setup
 ```
 
 The migration process will:
+
 - 🔍 Detect Renovate config files (`renovate.json`, `.renovaterc`, `package.json`)
-- ⚙️ Convert settings to Buddy Bot format
+- ⚙️ Convert settings to Buddy format
 - ⚠️ Identify incompatible features
 - 📋 Generate detailed migration report
 
@@ -20,7 +21,7 @@ The migration process will:
 
 ### Basic Settings
 
-| Renovate Setting | Buddy Bot Equivalent | Notes |
+| Renovate Setting | Buddy Equivalent | Notes |
 |-----------------|---------------------|-------|
 | `extends` | N/A | Use explicit configuration instead |
 | `schedule` | `schedule.cron` | Converted to cron expressions |
@@ -41,7 +42,7 @@ The migration process will:
   "schedule": ["before 6am"]
 }
 
-// Buddy Bot
+// Buddy
 {
   schedule: {
     cron: '0 4 * * *', // 4 AM daily
@@ -52,7 +53,7 @@ The migration process will:
 
 **Common Schedule Mappings:**
 
-| Renovate | Buddy Bot Cron | Description |
+| Renovate | Buddy Cron | Description |
 |----------|---------------|-------------|
 | `"before 6am"` | `0 4 * * *` | Daily at 4 AM |
 | `"every weekend"` | `0 2 * * 6` | Saturday 2 AM |
@@ -75,13 +76,13 @@ The migration process will:
   ]
 }
 
-// Buddy Bot
+// Buddy
 {
   packages: {
     groups: [
       {
         name: 'React packages',
-        packages: ['react', 'react-dom'],
+        patterns: ['react', 'react-dom'],
         updateType: 'all'
       }
     ]
@@ -103,13 +104,13 @@ The migration process will:
   ]
 }
 
-// Buddy Bot
+// Buddy
 {
   packages: {
     groups: [
       {
         name: 'TypeScript definitions',
-        patterns: ['^@types/'],
+        patterns: ['@types/*'],
         updateType: 'all',
         schedule: {
           cron: '0 4 * * 1' // Monday 4 AM
@@ -137,7 +138,7 @@ The migration process will:
   ]
 }
 
-// Buddy Bot
+// Buddy
 {
   packages: {
     strategy: 'minor', // Excludes major updates
@@ -164,7 +165,7 @@ The migration process will:
   "dependencyDashboardTitle": "Dependency Updates"
 }
 
-// Buddy Bot
+// Buddy
 {
   dashboard: {
     enabled: true,
@@ -195,7 +196,7 @@ The migration process will:
   ]
 }
 
-// Buddy Bot
+// Buddy
 {
   pullRequest: {
     autoMerge: {
@@ -224,16 +225,18 @@ The migration process will:
 
 ## Incompatible Features
 
-Some Renovate features don't have direct equivalents in Buddy Bot:
+Some Renovate features don't have direct equivalents in Buddy:
 
 ### ❌ Not Supported
+
 - **Preset Extensions** (`extends`): Use explicit configuration
 - **Regex Managers** (`regexManagers`): Manual configuration needed
 - **Custom Datasources**: Limited to npm, Composer, GitHub Actions
 - **Complex Scheduling Logic**: Use cron expressions instead
-- **Branch Prefix Customization**: Fixed `buddy-bot/` prefix
+- **Branch Prefix Customization**: Fixed `buddy/` prefix
 
 ### ⚠️ Requires Manual Setup
+
 - **Custom PR Templates**: Configure in `pullRequest.bodyTemplate`
 - **Platform-specific Settings**: Adapt to GitHub Actions workflows
 - **Complex Grouping Logic**: Simplify to pattern-based groups
@@ -264,7 +267,7 @@ export default {
     reviewers: ['@team-leads'],
     labels: ['dependencies']
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### Advanced Setup
@@ -279,33 +282,29 @@ export default {
   },
   packages: {
     strategy: 'all',
-    groups: [
+    rules: [
       {
-        name: 'TypeScript',
-        patterns: ['^@types/', 'typescript'],
-        updateType: 'all',
+        matchPackages: ['@types/*', 'typescript'],
+        groupName: 'TypeScript',
         autoMerge: true
       },
       {
-        name: 'ESLint',
-        patterns: ['^eslint', '^@typescript-eslint/'],
-        updateType: 'minor',
-        schedule: {
-          cron: '0 2 * * 1' // Weekly for linting tools
-        }
+        matchPackages: ['eslint*', '@typescript-eslint/*'],
+        groupName: 'ESLint',
+        strategy: 'minor',
+        schedule: '0 2 * * 1' // Only proposed on a Monday run
       },
       {
-        name: 'React Ecosystem',
-        packages: ['react', 'react-dom', '@types/react'],
-        updateType: 'minor',
+        matchPackages: ['react', 'react-dom', '@types/react'],
+        groupName: 'React Ecosystem',
+        strategy: 'minor',
         autoMerge: false // Requires review
       },
       {
-        name: 'Security Updates',
-        patterns: ['*'],
-        updateType: 'patch',
+        matchUpdateTypes: ['patch'],
+        groupName: 'Patch Updates',
         autoMerge: true,
-        labels: ['security', 'auto-merge']
+        labels: ['auto-merge']
       }
     ]
   },
@@ -313,7 +312,7 @@ export default {
     autoMerge: {
       enabled: true,
       strategy: 'squash',
-      conditions: ['status-success', 'no-conflicts']
+      conditions: ['patch-only']
     },
     titleFormat: 'chore(deps): {action} {packages}',
     labels: ['dependencies', 'automated']
@@ -325,7 +324,7 @@ export default {
     includePackageJson: true,
     includeGitHubActions: true
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ## Step-by-Step Migration
@@ -342,7 +341,7 @@ jq '.renovate' package.json > renovate-config.backup.json
 ### 2. Run Automated Migration
 
 ```bash
-buddy-bot setup
+buddy setup
 ```
 
 Review the migration report and note any warnings or incompatible features.
@@ -351,24 +350,24 @@ Review the migration report and note any warnings or incompatible features.
 
 ```bash
 # Test scanning
-buddy-bot scan --verbose
+buddy scan --verbose
 
 # Test update process (dry run)
-buddy-bot update --dry-run
+buddy update --dry-run
 ```
 
 ### 4. Validate Generated Workflows
 
 Check the generated GitHub Actions workflows:
-- `.github/workflows/buddy-dashboard.yml`
-- `.github/workflows/buddy-check.yml`
-- `.github/workflows/buddy-update.yml`
+
+- `.github/workflows/buddy.yml` — the unified workflow: rebase checks, dependency updates and the dashboard
+- `.github/workflows/buddy-security.yml` — the security audit, kept separate so it triggers on its own path filters
 
 ### 5. Gradual Transition
 
-1. **Week 1**: Run both Renovate and Buddy Bot in parallel
+1. **Week 1**: Run both Renovate and Buddy in parallel
 2. **Week 2**: Compare PR quality and timing
-3. **Week 3**: Disable Renovate, monitor Buddy Bot
+3. **Week 3**: Disable Renovate, monitor Buddy
 4. **Week 4**: Remove Renovate configuration
 
 ### 6. Cleanup
@@ -402,7 +401,7 @@ npm pkg delete renovate
 
 **Custom managers not working:**
 ```typescript
-// Buddy Bot focuses on standard package managers
+// Buddy focuses on standard package managers
 // For custom files, consider manual updates
 ```
 
@@ -410,12 +409,13 @@ npm pkg delete renovate
 
 - 📖 Check the main [Migration Guide](/advanced/migration)
 - 🔧 Review [Configuration](/config) options
-- 💬 Ask in [Discord](https://discord.gg/stacksjs)
+- 💬 Ask in [Discord](https://stacksjs.com/discord)
 - 🐛 Report issues on [GitHub](https://github.com/stacksjs/buddy/issues)
 
 ## Best Practices
 
 ### ✅ Do
+
 - Start with automated migration
 - Test thoroughly before removing Renovate
 - Simplify complex configurations
@@ -423,10 +423,11 @@ npm pkg delete renovate
 - Monitor PR quality during transition
 
 ### ❌ Don't
+
 - Remove Renovate immediately
 - Ignore migration warnings
 - Use overly complex grouping
 - Skip dry-run testing
 - Forget to update team documentation
 
-Renovate's flexibility comes with complexity. Buddy Bot aims for simplicity while maintaining power - your migration might be a good opportunity to simplify your dependency management strategy.
+Renovate's flexibility comes with complexity. Buddy aims for simplicity while maintaining power - your migration might be a good opportunity to simplify your dependency management strategy.

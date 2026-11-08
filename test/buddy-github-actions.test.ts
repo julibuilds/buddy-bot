@@ -1,8 +1,8 @@
-import type { BuddyBotConfig, PackageFile, PackageUpdate } from '../src/types'
+import type { BuddyConfig, PackageFile, PackageUpdate } from '../src/types'
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { Buddy } from '../src/buddy'
 
-const mockConfig: BuddyBotConfig = {
+const mockConfig: BuddyConfig = {
   verbose: false,
   packages: { strategy: 'all' },
   repository: {
@@ -59,8 +59,8 @@ describe('Buddy - GitHub Actions Integration', () => {
     spyOn(console, 'warn').mockImplementation(() => {})
     spyOn(console, 'error').mockImplementation(() => {})
 
-    // Mock ts-pkgx to prevent real dependency file parsing
-    resolveDependencyFileSpy = spyOn(await import('ts-pkgx'), 'resolveDependencyFile')
+    // Mock ts-pantry to prevent real dependency file parsing
+    resolveDependencyFileSpy = spyOn(await import('ts-pantry'), 'resolveDependencyFile')
     resolveDependencyFileSpy.mockResolvedValue({ allDependencies: [] })
 
     // Ensure we have fresh mocks for each test even if modules are globally mocked
@@ -133,25 +133,39 @@ describe('Buddy - GitHub Actions Integration', () => {
     it('should handle GitHub API failures gracefully', async () => {
       const buddy = new Buddy(mockConfig)
 
-      // Mock GitHub API to fail for first two actions, succeed for third
+      // Mock GitHub API with URL-based responses to handle parallel fetching
+      // Since actions are fetched in parallel, we need to match by URL not by call order
       fetchSpy = spyOn(globalThis, 'fetch')
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 404,
-        } as Response) // actions/checkout (not found)
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 404,
-        } as Response) // actions/checkout fallback to releases
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 404,
-        } as Response) // actions/checkout fallback to tags
-        .mockRejectedValueOnce(new Error('Network error')) // oven-sh/setup-bun (network error)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ tag_name: 'v4.2.0' }),
-        } as Response) // actions/cache (success)
+        .mockImplementation((async (url: string) => {
+          const urlStr = url.toString()
+
+          // actions/checkout - all endpoints fail
+          if (urlStr.includes('actions/checkout/releases/latest')) {
+            return { ok: false, status: 404 } as Response
+          }
+          if (urlStr.includes('actions/checkout/releases')) {
+            return { ok: false, status: 404 } as Response
+          }
+          if (urlStr.includes('actions/checkout/tags')) {
+            return { ok: false, status: 404 } as Response
+          }
+
+          // oven-sh/setup-bun - network error
+          if (urlStr.includes('oven-sh/setup-bun')) {
+            throw new Error('Network error')
+          }
+
+          // actions/cache - success
+          if (urlStr.includes('actions/cache/releases/latest')) {
+            return {
+              ok: true,
+              json: async () => ({ tag_name: 'v4.2.0' }),
+            } as Response
+          }
+
+          // Default: not found
+          return { ok: false, status: 404 } as Response
+        }) as typeof fetch)
 
       packageScannerSpy.mockResolvedValue([mockGitHubActionsFile])
       registryClientSpy.mockResolvedValue([])
@@ -197,8 +211,9 @@ describe('Buddy - GitHub Actions Integration', () => {
 
       const result = await buddy.scanForUpdates()
 
-      // Should only check GitHub Actions files
-      expect(fetchSpy).toHaveBeenCalledTimes(3) // 3 actions in the workflow file
+      // Should only check GitHub Actions files: one release lookup per action,
+      // plus the single batched OSV advisory query for them.
+      expect(fetchSpy).toHaveBeenCalledTimes(4)
       expect(result.updates.every(u => u.dependencyType === 'github-actions')).toBe(true)
     })
 

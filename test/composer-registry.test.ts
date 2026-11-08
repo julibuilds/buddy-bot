@@ -1,4 +1,4 @@
-import type { BuddyBotConfig } from '../src/types'
+import type { BuddyConfig } from '../src/types'
 import type { Logger } from '../src/utils/logger'
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import fs from 'node:fs'
@@ -9,8 +9,10 @@ describe('RegistryClient - Composer Integration', () => {
   let mockLogger: Logger
   let runCommandSpy: any
   let fetchSpy: any
+  let beforeEachExistsSpy: any
+  let beforeEachReadFileSpy: any
 
-  const mockConfig: BuddyBotConfig = {
+  const mockConfig: BuddyConfig = {
     packages: {
       strategy: 'all',
       ignore: ['ignored/package'],
@@ -29,9 +31,12 @@ describe('RegistryClient - Composer Integration', () => {
 
     registryClient = new RegistryClient('/test/project', mockLogger, mockConfig)
 
-    // Mock file system operations
-    spyOn(fs, 'existsSync').mockReturnValue(true)
-    spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({
+    // Mock file system operations. Track the spies so afterEach can restore
+    // them — without restoration these leaks bleed into later test files
+    // (e.g. configuration-migration.test.ts), which read real files via
+    // fs.readFileSync and silently get this composer mock content back.
+    beforeEachExistsSpy = spyOn(fs, 'existsSync').mockReturnValue(true)
+    beforeEachReadFileSpy = spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({
       'require': {
         'php': '^8.1',
         'laravel/framework': '^10.0',
@@ -59,6 +64,8 @@ describe('RegistryClient - Composer Integration', () => {
   afterEach(() => {
     runCommandSpy?.mockRestore?.()
     fetchSpy?.mockRestore?.()
+    beforeEachExistsSpy?.mockRestore?.()
+    beforeEachReadFileSpy?.mockRestore?.()
   })
 
   describe('getComposerOutdatedPackages', () => {
@@ -206,7 +213,7 @@ describe('RegistryClient - Composer Integration', () => {
     })
 
     it('should respect excludeMajor configuration', async () => {
-      const configWithExcludeMajor: BuddyBotConfig = {
+      const configWithExcludeMajor: BuddyConfig = {
         packages: {
           strategy: 'all',
           excludeMajor: true,
@@ -255,7 +262,10 @@ describe('RegistryClient - Composer Integration', () => {
 
       const metadata = await registryClient.getComposerPackageMetadata('laravel/framework')
 
-      expect(fetchSpy).toHaveBeenCalledWith('https://packagist.org/packages/laravel/framework.json')
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://packagist.org/packages/laravel/framework.json',
+        expect.objectContaining({ headers: { 'User-Agent': 'buddy' } }),
+      )
       expect(metadata).toBeDefined()
       expect(metadata!.name).toBe('laravel/framework')
       expect(metadata!.description).toBe('The Laravel Framework')
@@ -278,7 +288,7 @@ describe('RegistryClient - Composer Integration', () => {
     })
 
     it('should handle fetch errors gracefully', async () => {
-      fetchSpy.mockRejectedValueOnce(new Error('Network error'))
+      fetchSpy.mockRejectedValue(new Error('Network error'))
 
       const metadata = await registryClient.getComposerPackageMetadata('laravel/framework')
 
@@ -289,11 +299,17 @@ describe('RegistryClient - Composer Integration', () => {
 
   describe('composerPackageExists', () => {
     it('should return true for existing packages', async () => {
-      fetchSpy.mockResolvedValueOnce({ ok: true })
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ package: { name: 'laravel/framework' } }),
+      })
 
       const exists = await registryClient.composerPackageExists('laravel/framework')
 
-      expect(fetchSpy).toHaveBeenCalledWith('https://packagist.org/packages/laravel/framework.json')
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://packagist.org/packages/laravel/framework.json',
+        expect.objectContaining({ headers: { 'User-Agent': 'buddy' } }),
+      )
       expect(exists).toBe(true)
     })
 
@@ -306,7 +322,7 @@ describe('RegistryClient - Composer Integration', () => {
     })
 
     it('should handle fetch errors gracefully', async () => {
-      fetchSpy.mockRejectedValueOnce(new Error('Network error'))
+      fetchSpy.mockRejectedValue(new Error('Network error'))
 
       const exists = await registryClient.composerPackageExists('laravel/framework')
 
@@ -368,17 +384,22 @@ describe('RegistryClient - Composer Integration', () => {
 
   describe('Integration with main getOutdatedPackages', () => {
     it('should include Composer packages when composer.json exists', async () => {
+      // Create a fresh registry client for this test to avoid interference
+      const testRegistryClient = new RegistryClient('/test/project', mockLogger, mockConfig)
+
       // Mock file system
       const existsSyncSpy = spyOn(fs, 'existsSync')
       existsSyncSpy.mockImplementation((path) => {
         return String(path).endsWith('composer.json')
       })
 
-      // Mock bun outdated (no npm packages)
-      runCommandSpy.mockResolvedValueOnce('[]') // Empty bun outdated
+      // Mock all methods that getOutdatedPackages calls to return empty arrays
+      spyOn(testRegistryClient, 'runBunOutdated' as any).mockResolvedValue([])
+      spyOn(testRegistryClient, 'getWorkspaceOutdatedPackages' as any).mockResolvedValue([])
+      spyOn(testRegistryClient, 'getPackageJsonOutdated' as any).mockResolvedValue([])
 
       // Mock Composer being available and having updates
-      spyOn(registryClient, 'getComposerOutdatedPackages').mockResolvedValue([
+      spyOn(testRegistryClient, 'getComposerOutdatedPackages').mockResolvedValue([
         {
           name: 'laravel/framework',
           currentVersion: '10.0.0',
@@ -390,10 +411,7 @@ describe('RegistryClient - Composer Integration', () => {
         },
       ])
 
-      // Mock other methods that getOutdatedPackages calls
-      spyOn(registryClient, 'getPackageJsonOutdated' as any).mockResolvedValue([])
-
-      const updates = await registryClient.getOutdatedPackages()
+      const updates = await testRegistryClient.getOutdatedPackages()
 
       expect(updates).toHaveLength(1)
       expect(updates[0].name).toBe('laravel/framework')

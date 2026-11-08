@@ -1,16 +1,1059 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.14...v0.11.15)
+
+## 🐛 Bug Fixes
+
+- isolate standalone runtime from consumer preloads ([bcf46e4](https://github.com/stacksjs/buddy/commit/bcf46e4)) _(by Chris <chris@stacksjs.com>)_ ([#1461](https://github.com/stacksjs/buddy/issues/1461))
+- restrict registry updates to owned manifests ([4ab9d05](https://github.com/stacksjs/buddy/commit/4ab9d05)) _(by Chris <chris@stacksjs.com>)_ ([#1459](https://github.com/stacksjs/buddy/issues/1459))
+
+## 🔧 Chores
+
+- release v0.11.15 ([87afbfb](https://github.com/stacksjs/buddy/commit/87afbfb)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.13...v0.11.14)
+
+## 🐛 Bug Fixes
+
+- recognize actual git working trees in doctor ([bc2e8ac](https://github.com/stacksjs/buddy/commit/bc2e8ac)) _(by Chris <chris@stacksjs.com>)_ ([#1460](https://github.com/stacksjs/buddy/issues/1460))
+- exclude linked manifests from dependency discovery ([cd08af4](https://github.com/stacksjs/buddy/commit/cd08af4)) _(by Chris <chris@stacksjs.com>)_ ([#1459](https://github.com/stacksjs/buddy/issues/1459))
+
+## 🔧 Chores
+
+- release v0.11.14 ([d203811](https://github.com/stacksjs/buddy/commit/d203811)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.12...v0.11.13)
+
+## 🐛 Bug Fixes
+
+- **rebase**: refresh a PR from the group its manifest names ([1e618ac](https://github.com/stacksjs/buddy/commit/1e618ac)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#2817](https://github.com/stacksjs/buddy/issues/2817))
+
+## 🔧 Chores
+
+- release v0.11.13 ([38b8d59](https://github.com/stacksjs/buddy/commit/38b8d59)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.11...v0.11.12)
+
+## 🐛 Bug Fixes
+
+- **groups**: bump every manifest that declares a dependency ([39982a4](https://github.com/stacksjs/buddy/commit/39982a4)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.11.12 ([61de34c](https://github.com/stacksjs/buddy/commit/61de34c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.10...v0.11.11)
+
+## 🐛 Bug Fixes
+
+- **lockfile**: regenerate the lock file of a nested project too ([cc0aecf](https://github.com/stacksjs/buddy/commit/cc0aecf)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.11.11 ([0abe441](https://github.com/stacksjs/buddy/commit/0abe441)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.9...v0.11.10)
+
+## 🐛 Bug Fixes
+
+- **pr**: keep the rebase checkbox when a long body is truncated ([06b3f12](https://github.com/stacksjs/buddy/commit/06b3f12)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.11.10 ([2dca667](https://github.com/stacksjs/buddy/commit/2dca667)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.8...v0.11.9)
+
+## 🐛 Bug Fixes
+
+- **rebase**: rebase a ticked PR, and one whose branch is behind its base ([343032f](https://github.com/stacksjs/buddy/commit/343032f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.11.9 ([4f1a20a](https://github.com/stacksjs/buddy/commit/4f1a20a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.7...v0.11.8)
+
+## 🐛 Bug Fixes
+
+- recognise pre-rename buddy-bot/ branches as buddy's own ([3db1817](https://github.com/stacksjs/buddy/commit/3db1817)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#2848](https://github.com/stacksjs/buddy/issues/2848))
+
+## 🔧 Chores
+
+- release v0.11.8 ([a1fa507](https://github.com/stacksjs/buddy/commit/a1fa507)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.6...v0.11.7)
+
+## 🐛 Bug Fixes
+
+- **git**: push with BUDDY_TOKEN for real, so refreshed PRs re-run CI ([17486c6](https://github.com/stacksjs/buddy/commit/17486c6)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#2848](https://github.com/stacksjs/buddy/issues/2848))
+
+## 🔧 Chores
+
+- release v0.11.7 ([77c2bd1](https://github.com/stacksjs/buddy/commit/77c2bd1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.5...v0.11.6)
+
+## 🐛 Bug Fixes
+
+- **pr**: stop failing runs on refused workflow pushes, and refresh stale PRs ([4fa72de](https://github.com/stacksjs/buddy/commit/4fa72de)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#2848](https://github.com/stacksjs/buddy/issues/2848), [#1359](https://github.com/stacksjs/buddy/issues/1359))
+- **actions**: compare a SHA pin by its version comment, and keep it pinned ([00953f3](https://github.com/stacksjs/buddy/commit/00953f3)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1458](https://github.com/stacksjs/buddy/issues/1458))
+
+## 🔧 Chores
+
+- release v0.11.6 ([4bb4a6c](https://github.com/stacksjs/buddy/commit/4bb4a6c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.4...v0.11.5)
+
+## 🐛 Bug Fixes
+
+- **lockfile**: regenerate pantry.lock alongside the JS lockfile ([25c9f51](https://github.com/stacksjs/buddy/commit/25c9f51)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#2848](https://github.com/stacksjs/buddy/issues/2848))
+
+## ✅ Tests
+
+- **config**: isolate the legacy-name lookup from GITHUB_REPOSITORY ([c449557](https://github.com/stacksjs/buddy/commit/c449557)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1457](https://github.com/stacksjs/buddy/issues/1457))
+
+## 🔧 Chores
+
+- release v0.11.5 ([ce830bd](https://github.com/stacksjs/buddy/commit/ce830bd)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.3...v0.11.4)
+
+## 🐛 Bug Fixes
+
+- **config**: still read config files named for buddy-bot ([abf0092](https://github.com/stacksjs/buddy/commit/abf0092)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1457](https://github.com/stacksjs/buddy/issues/1457))
+
+## 🔧 Chores
+
+- release v0.11.4 ([c649297](https://github.com/stacksjs/buddy/commit/c649297)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.2...v0.11.3)
+
+## 🐛 Bug Fixes
+
+- fail the run when a pull request cannot be opened, and use the PAT to open it ([4fe0f36](https://github.com/stacksjs/buddy/commit/4fe0f36)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.11.3 ([77868d3](https://github.com/stacksjs/buddy/commit/77868d3)) _(by Chris <chris@stacksjs.com>)_
+- run @stacksjs/logsmith, not the unrelated npm 'logsmith' ([7185acc](https://github.com/stacksjs/buddy/commit/7185acc)) _(by Chris <chrisbreuer93@gmail.com>)_
+- release through @stacksjs/bumpx, not the unrelated npm 'bumpx' ([deabeed](https://github.com/stacksjs/buddy/commit/deabeed)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.11.1...v0.11.2)
+
+## 💥 Breaking Changes
+
+- fix!: make strategies and labels behave as documented (#1399) ([be0a5bd](https://github.com/stacksjs/buddy-bot/commit/be0a5bd)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1399](https://github.com/stacksjs/buddy-bot/issues/1399), [#1399](https://github.com/stacksjs/buddy-bot/issues/1399))
+
+## ✨ Features
+
+- **events**: one notification story — fire every declared event, trim setup to its real job (#1449) ([4d3d670](https://github.com/stacksjs/buddy-bot/commit/4d3d670)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1449](https://github.com/stacksjs/buddy-bot/issues/1449), [#1449](https://github.com/stacksjs/buddy-bot/issues/1449))
+- **setup**: make the presets deliver their descriptions, and delete the mode nothing could reach (#1440) ([aecc9c7](https://github.com/stacksjs/buddy-bot/commit/aecc9c7)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1440](https://github.com/stacksjs/buddy-bot/issues/1440), [#1440](https://github.com/stacksjs/buddy-bot/issues/1440), [#1412](https://github.com/stacksjs/buddy-bot/issues/1412), [#1412](https://github.com/stacksjs/buddy-bot/issues/1412))
+- **engines**: propose runtime bumps, which were resolved and never proposed (#1428) ([12a063d](https://github.com/stacksjs/buddy-bot/commit/12a063d)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1428](https://github.com/stacksjs/buddy-bot/issues/1428), [#1428](https://github.com/stacksjs/buddy-bot/issues/1428))
+- **touch**: post the checkboxes the finishing-touch flow waits on (#1424) ([41d8258](https://github.com/stacksjs/buddy-bot/commit/41d8258)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1424](https://github.com/stacksjs/buddy-bot/issues/1424), [#1424](https://github.com/stacksjs/buddy-bot/issues/1424), [#1418](https://github.com/stacksjs/buddy-bot/issues/1418))
+- **review**: implement @buddy resolve, which was advertised and absent (#1417) ([d731e6f](https://github.com/stacksjs/buddy-bot/commit/d731e6f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1417](https://github.com/stacksjs/buddy-bot/issues/1417), [#1417](https://github.com/stacksjs/buddy-bot/issues/1417))
+- **ci**: let @buddy fix-ci find the run a comment cannot name (#1413) ([126ea7d](https://github.com/stacksjs/buddy-bot/commit/126ea7d)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1413](https://github.com/stacksjs/buddy-bot/issues/1413), [#1413](https://github.com/stacksjs/buddy-bot/issues/1413), [#1410](https://github.com/stacksjs/buddy-bot/issues/1410))
+- **setup**: make the preset you pick the preset you get (#1412) ([ed0f542](https://github.com/stacksjs/buddy-bot/commit/ed0f542)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1412](https://github.com/stacksjs/buddy-bot/issues/1412), [#1412](https://github.com/stacksjs/buddy-bot/issues/1412))
+- **setup**: make the preset you pick the preset you get ([85dfaae](https://github.com/stacksjs/buddy-bot/commit/85dfaae)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ci**: let buddy see whose failure it is, and retry the ones worth retrying (#1410) ([f3d2cda](https://github.com/stacksjs/buddy-bot/commit/f3d2cda)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1410](https://github.com/stacksjs/buddy-bot/issues/1410), [#1410](https://github.com/stacksjs/buddy-bot/issues/1410), [#1407](https://github.com/stacksjs/buddy-bot/issues/1407))
+- **cli**: restore the affordances the docs promised (#1402) ([f7e6a82](https://github.com/stacksjs/buddy-bot/commit/f7e6a82)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1402](https://github.com/stacksjs/buddy-bot/issues/1402), [#1402](https://github.com/stacksjs/buddy-bot/issues/1402))
+- **ci**: check the docs against the source they describe (#1403) ([c9203a2](https://github.com/stacksjs/buddy-bot/commit/c9203a2)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1403](https://github.com/stacksjs/buddy-bot/issues/1403), [#1403](https://github.com/stacksjs/buddy-bot/issues/1403))
+- **docs**: consolidate the nav behind one Docs link ([c5e6d8a](https://github.com/stacksjs/buddy-bot/commit/c5e6d8a)) _(by Chris <chris@stacksjs.com>)_
+- **docs**: give the site a design of its own ([cb6ea56](https://github.com/stacksjs/buddy-bot/commit/cb6ea56)) _(by Chris <chris@stacksjs.com>)_
+- **brand**: give Buddy its own mark ([5286ad9](https://github.com/stacksjs/buddy-bot/commit/5286ad9)) _(by Chris <chris@stacksjs.com>)_ ([#0](https://github.com/stacksjs/buddy-bot/issues/0))
+- **docs**: add a Compare strip to the site footer ([ba61914](https://github.com/stacksjs/buddy-bot/commit/ba61914)) _(by Chris <chris@stacksjs.com>)_
+- **docs**: add a comparison page per competitor ([0a8c2a0](https://github.com/stacksjs/buddy-bot/commit/0a8c2a0)) _(by Chris <chris@stacksjs.com>)_
+- **docs**: put a Use Cases mega menu in the top nav ([9cf1358](https://github.com/stacksjs/buddy-bot/commit/9cf1358)) _(by Chris <chris@stacksjs.com>)_
+- **docs**: add a landing page for each use case ([3b9ae7c](https://github.com/stacksjs/buddy-bot/commit/3b9ae7c)) _(by Chris <chris@stacksjs.com>)_
+- **docs**: put a Features mega menu in the top nav ([6af7d6a](https://github.com/stacksjs/buddy-bot/commit/6af7d6a)) _(by Chris <chris@stacksjs.com>)_
+- **docs**: add a landing page for each feature ([6c77c40](https://github.com/stacksjs/buddy-bot/commit/6c77c40)) _(by Chris <chris@stacksjs.com>)_
+
+## 🐛 Bug Fixes
+
+- **deps-file**: anchor the dependency regex to a key, and rewrite each match from its own captures ([c561953](https://github.com/stacksjs/buddy-bot/commit/c561953)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1453](https://github.com/stacksjs/buddy-bot/issues/1453), [#1168](https://github.com/stacksjs/buddy-bot/issues/1168))
+- **docs**: publish the directory bunpress writes, and stop the secrets scan reading test fixtures ([9094be7](https://github.com/stacksjs/buddy-bot/commit/9094be7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **dashboard**: fail closed when the dashboard lookup errors (#1452) ([bc95959](https://github.com/stacksjs/buddy-bot/commit/bc95959)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1452](https://github.com/stacksjs/buddy-bot/issues/1452), [#1452](https://github.com/stacksjs/buddy-bot/issues/1452), [#1451](https://github.com/stacksjs/buddy-bot/issues/1451))
+- let the satisfied-PR closer consult the manifest, and reject phantom paths from PR bodies (#1447) ([44f0314](https://github.com/stacksjs/buddy-bot/commit/44f0314)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1447](https://github.com/stacksjs/buddy-bot/issues/1447), [#1447](https://github.com/stacksjs/buddy-bot/issues/1447), [#1364](https://github.com/stacksjs/buddy-bot/issues/1364))
+- read composer.json from the project path, and drop groups the strategy filter emptied (#1444) ([83fc2b6](https://github.com/stacksjs/buddy-bot/commit/83fc2b6)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1444](https://github.com/stacksjs/buddy-bot/issues/1444), [#1444](https://github.com/stacksjs/buddy-bot/issues/1444), [#1443](https://github.com/stacksjs/buddy-bot/issues/1443))
+- **cli**: let packages.strategy reach its flags, and sync CLAUDE.md's embedded README (#1441) ([dd005e7](https://github.com/stacksjs/buddy-bot/commit/dd005e7)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1441](https://github.com/stacksjs/buddy-bot/issues/1441), [#1441](https://github.com/stacksjs/buddy-bot/issues/1441))
+- **test**: defuse the suite's landmines, and cover the dossier's untested modules (#1436) ([b9d8492](https://github.com/stacksjs/buddy-bot/commit/b9d8492)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1436](https://github.com/stacksjs/buddy-bot/issues/1436), [#1436](https://github.com/stacksjs/buddy-bot/issues/1436), [#1434](https://github.com/stacksjs/buddy-bot/issues/1434))
+- **review**: read what publishing reported, honour reviewSuggestions, and un-strand two flags (#1435) ([dadac73](https://github.com/stacksjs/buddy-bot/commit/dadac73)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1435](https://github.com/stacksjs/buddy-bot/issues/1435), [#1435](https://github.com/stacksjs/buddy-bot/issues/1435))
+- keep the low-tier promises — bulk-update label, event-name validation, workflow personalisation (#1434) ([f0bb121](https://github.com/stacksjs/buddy-bot/commit/f0bb121)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1434](https://github.com/stacksjs/buddy-bot/issues/1434), [#1434](https://github.com/stacksjs/buddy-bot/issues/1434))
+- report skipped gates as skipped, and honour ai.majorUpgrades.maxAttempts (#1433) ([8999c1e](https://github.com/stacksjs/buddy-bot/commit/8999c1e)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1433](https://github.com/stacksjs/buddy-bot/issues/1433), [#1433](https://github.com/stacksjs/buddy-bot/issues/1433))
+- give GitLab/Bitbucket pipelines the review job, and stop cleanup lying (#1432) ([8ee2d8c](https://github.com/stacksjs/buddy-bot/commit/8ee2d8c)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1432](https://github.com/stacksjs/buddy-bot/issues/1432), [#1432](https://github.com/stacksjs/buddy-bot/issues/1432))
+- **cli**: apply the review and scan flags that were accepted and ignored (#1431) ([8e6262f](https://github.com/stacksjs/buddy-bot/commit/8e6262f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1431](https://github.com/stacksjs/buddy-bot/issues/1431), [#1431](https://github.com/stacksjs/buddy-bot/issues/1431))
+- **dashboard**: read the include toggles and the enabled switch (#1430) ([496463a](https://github.com/stacksjs/buddy-bot/commit/496463a)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1430](https://github.com/stacksjs/buddy-bot/issues/1430), [#1430](https://github.com/stacksjs/buddy-bot/issues/1430), [#1406](https://github.com/stacksjs/buddy-bot/issues/1406))
+- **reports**: honour reports.enabled and reports.period, drop the key nothing could read (#1429) ([f5adb6d](https://github.com/stacksjs/buddy-bot/commit/f5adb6d)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1429](https://github.com/stacksjs/buddy-bot/issues/1429), [#1429](https://github.com/stacksjs/buddy-bot/issues/1429))
+- **docker**: keep the digest on a pinned base image, and stop eating the file (#1427) ([3483bcf](https://github.com/stacksjs/buddy-bot/commit/3483bcf)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1427](https://github.com/stacksjs/buddy-bot/issues/1427), [#1427](https://github.com/stacksjs/buddy-bot/issues/1427))
+- **ecosystems**: regenerate the lockfiles the adapters were written to update (#1426) ([e278808](https://github.com/stacksjs/buddy-bot/commit/e278808)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1426](https://github.com/stacksjs/buddy-bot/issues/1426), [#1426](https://github.com/stacksjs/buddy-bot/issues/1426))
+- **gates**: actually refresh the dashboard instead of reporting that it did (#1425) ([41cf336](https://github.com/stacksjs/buddy-bot/commit/41cf336)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1425](https://github.com/stacksjs/buddy-bot/issues/1425), [#1425](https://github.com/stacksjs/buddy-bot/issues/1425))
+- **rules**: apply a rule's autoMigrate, closing the rule-effects family (#1423) ([53a449f](https://github.com/stacksjs/buddy-bot/commit/53a449f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1423](https://github.com/stacksjs/buddy-bot/issues/1423), [#1423](https://github.com/stacksjs/buddy-bot/issues/1423), [#1419](https://github.com/stacksjs/buddy-bot/issues/1419), [#1422](https://github.com/stacksjs/buddy-bot/issues/1422))
+- **rules**: consult a rule's autoMerge when deciding to merge (#1422) ([6da9591](https://github.com/stacksjs/buddy-bot/commit/6da9591)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1422](https://github.com/stacksjs/buddy-bot/issues/1422), [#1422](https://github.com/stacksjs/buddy-bot/issues/1422), [#1419](https://github.com/stacksjs/buddy-bot/issues/1419))
+- **gitlab**: read a job trace as text, so ciLogs is not a lie (#1421) ([4bce13b](https://github.com/stacksjs/buddy-bot/commit/4bce13b)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1421](https://github.com/stacksjs/buddy-bot/issues/1421), [#1421](https://github.com/stacksjs/buddy-bot/issues/1421))
+- **rules**: apply the per-rule minimum release age, which nothing read (#1419) ([d04a9aa](https://github.com/stacksjs/buddy-bot/commit/d04a9aa)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1419](https://github.com/stacksjs/buddy-bot/issues/1419), [#1419](https://github.com/stacksjs/buddy-bot/issues/1419))
+- **setup**: let the generated workflow's jobs actually start (#1418) ([a57b732](https://github.com/stacksjs/buddy-bot/commit/a57b732)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1418](https://github.com/stacksjs/buddy-bot/issues/1418), [#1418](https://github.com/stacksjs/buddy-bot/issues/1418), [#1412](https://github.com/stacksjs/buddy-bot/issues/1412))
+- **setup**: make custom plugins able to run at all (#1416) ([d639991](https://github.com/stacksjs/buddy-bot/commit/d639991)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1416](https://github.com/stacksjs/buddy-bot/issues/1416), [#1416](https://github.com/stacksjs/buddy-bot/issues/1416))
+- **review**: give pull request reviews the analyzers and learnings they skipped (#1415) ([84f7a14](https://github.com/stacksjs/buddy-bot/commit/84f7a14)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1415](https://github.com/stacksjs/buddy-bot/issues/1415), [#1415](https://github.com/stacksjs/buddy-bot/issues/1415), [#1413](https://github.com/stacksjs/buddy-bot/issues/1413))
+- **agent**: stop handing an agent text a stranger wrote as its instructions (#1414) ([46aa68c](https://github.com/stacksjs/buddy-bot/commit/46aa68c)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1414](https://github.com/stacksjs/buddy-bot/issues/1414), [#1414](https://github.com/stacksjs/buddy-bot/issues/1414))
+- **pr**: apply the security label so security-only can fire (#1409) ([31c73ac](https://github.com/stacksjs/buddy-bot/commit/31c73ac)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1409](https://github.com/stacksjs/buddy-bot/issues/1409), [#1409](https://github.com/stacksjs/buddy-bot/issues/1409))
+- **ci**: land the lock-file repair instead of describing it (#1408) ([b8a8b8c](https://github.com/stacksjs/buddy-bot/commit/b8a8b8c)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1408](https://github.com/stacksjs/buddy-bot/issues/1408), [#1408](https://github.com/stacksjs/buddy-bot/issues/1408))
+- **review**: honour the ai.review settings that nothing read (#1406) ([4c52ea0](https://github.com/stacksjs/buddy-bot/commit/4c52ea0)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1406](https://github.com/stacksjs/buddy-bot/issues/1406), [#1406](https://github.com/stacksjs/buddy-bot/issues/1406))
+- **ci**: give the repair loop the guard it already had (#1407) ([6f5418e](https://github.com/stacksjs/buddy-bot/commit/6f5418e)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1407](https://github.com/stacksjs/buddy-bot/issues/1407), [#1407](https://github.com/stacksjs/buddy-bot/issues/1407))
+- **review**: persist review state where it is read back (#1405) ([789e8c7](https://github.com/stacksjs/buddy-bot/commit/789e8c7)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1405](https://github.com/stacksjs/buddy-bot/issues/1405), [#1405](https://github.com/stacksjs/buddy-bot/issues/1405))
+- **docs**: rewrite the migration sign-off, and say what actually migrates ([12b85e7](https://github.com/stacksjs/buddy-bot/commit/12b85e7)) _(by Chris <chris@stacksjs.com>)_
+- **docs**: cap the hero code panel so it cannot outgrow the copy ([0df83da](https://github.com/stacksjs/buddy-bot/commit/0df83da)) _(by Chris <chris@stacksjs.com>)_
+- **docs**: render the code groups, and dress them as terminals ([b68a5fa](https://github.com/stacksjs/buddy-bot/commit/b68a5fa)) _(by Chris <chris@stacksjs.com>)_
+
+## ♻️ Code Refactoring
+
+- one update-type classifier, with the edge cases decided instead of accidental (#1439) ([bde8047](https://github.com/stacksjs/buddy-bot/commit/bde8047)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1439](https://github.com/stacksjs/buddy-bot/issues/1439), [#1439](https://github.com/stacksjs/buddy-bot/issues/1439))
+
+## 📝 Documentation
+
+- replace the claims the source does not support (#1400) ([2673d93](https://github.com/stacksjs/buddy-bot/commit/2673d93)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1400](https://github.com/stacksjs/buddy-bot/issues/1400), [#1400](https://github.com/stacksjs/buddy-bot/issues/1400))
+- **use-cases**: drop the trailing question mark pickier flags ([cc576f7](https://github.com/stacksjs/buddy-bot/commit/cc576f7)) _(by Chris <chris@stacksjs.com>)_
+- **index**: point the home page at the new sections ([087f23a](https://github.com/stacksjs/buddy-bot/commit/087f23a)) _(by Chris <chris@stacksjs.com>)_
+
+## ✅ Tests
+
+- **pr-body**: set the APP_ENV this file needs instead of inheriting it from another ([900b725](https://github.com/stacksjs/buddy-bot/commit/900b725)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- import the CLI without parsing, and pin its wiring in-process (#1448) ([683f4e7](https://github.com/stacksjs/buddy-bot/commit/683f4e7)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1448](https://github.com/stacksjs/buddy-bot/issues/1448), [#1448](https://github.com/stacksjs/buddy-bot/issues/1448), [#1441](https://github.com/stacksjs/buddy-bot/issues/1441))
+- cover the untested halves of the big integration files (#1443) ([1deec83](https://github.com/stacksjs/buddy-bot/commit/1deec83)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1443](https://github.com/stacksjs/buddy-bot/issues/1443), [#1443](https://github.com/stacksjs/buddy-bot/issues/1443), [#1359](https://github.com/stacksjs/buddy-bot/issues/1359))
+- measure coverage, and call the three files nothing called (#1442) ([282a900](https://github.com/stacksjs/buddy-bot/commit/282a900)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1442](https://github.com/stacksjs/buddy-bot/issues/1442), [#1442](https://github.com/stacksjs/buddy-bot/issues/1442))
+- give the exported VersionResolver its first tests (#1438) ([3aef468](https://github.com/stacksjs/buddy-bot/commit/3aef468)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1438](https://github.com/stacksjs/buddy-bot/issues/1438), [#1438](https://github.com/stacksjs/buddy-bot/issues/1438))
+
+## 💚 Continuous Integration
+
+- dogfood the checked-out source, and smoke the PR's own CLI without secrets (#1445) ([5469fea](https://github.com/stacksjs/buddy-bot/commit/5469fea)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1445](https://github.com/stacksjs/buddy-bot/issues/1445), [#1445](https://github.com/stacksjs/buddy-bot/issues/1445))
+- **release**: keep binaries on recent releases, not only the newest ([c80dcf1](https://github.com/stacksjs/buddy-bot/commit/c80dcf1)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.11.2 ([b8f7197](https://github.com/stacksjs/buddy-bot/commit/b8f7197)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update all non-major dependencies (updated) ([551c59d](https://github.com/stacksjs/buddy-bot/commit/551c59d)) _(by [github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>](https://github.com/github-actions[bot]))_
+- **deps**: update stacks packages and the anthropic sdk, aligning the peer range (#1446) ([a5909b0](https://github.com/stacksjs/buddy-bot/commit/a5909b0)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1446](https://github.com/stacksjs/buddy-bot/issues/1446), [#1446](https://github.com/stacksjs/buddy-bot/issues/1446), [#1398](https://github.com/stacksjs/buddy-bot/issues/1398))
+- retire Renovate — this repository's dependency bot is buddy (#1437) ([0f070bb](https://github.com/stacksjs/buddy-bot/commit/0f070bb)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1437](https://github.com/stacksjs/buddy-bot/issues/1437), [#1437](https://github.com/stacksjs/buddy-bot/issues/1437), [#1352](https://github.com/stacksjs/buddy-bot/issues/1352), [#1362](https://github.com/stacksjs/buddy-bot/issues/1362), [#1363](https://github.com/stacksjs/buddy-bot/issues/1363))
+- ignore .claude, alongside the other editor directories ([1bdc835](https://github.com/stacksjs/buddy-bot/commit/1bdc835)) _(by Chris <chris@stacksjs.com>)_
+
+## 🎉 Miscellaneous
+
+- Revert "feat(setup): make the preset you pick the preset you get" ([b45b0ec](https://github.com/stacksjs/buddy-bot/commit/b45b0ec)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.11.0...v0.11.1)
+
+## ✅ Tests
+
+- stop the suite reaching the internet ([8032ff2](https://github.com/stacksjs/buddy/commit/8032ff2)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.11.1 ([e78204a](https://github.com/stacksjs/buddy/commit/e78204a)) _(by Chris <chris@stacksjs.com>)_
+- remove orphaned probe9.ts scratch file ([d15a19f](https://github.com/stacksjs/buddy/commit/d15a19f)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy/compare/v0.10.5...v0.11.0)
+
+## 💥 Breaking Changes
+
+- feat(pkg)!: publish as @buddysh/buddy and export config and setup entrypoints ([3000f93](https://github.com/stacksjs/buddy/commit/3000f93)) _(by Chris <chris@stacksjs.com>)_
+- refactor!: rename buddy-bot identifiers, env vars and branch prefix to buddy ([bbe6918](https://github.com/stacksjs/buddy/commit/bbe6918)) _(by Chris <chris@stacksjs.com>)_
+
+## 🐛 Bug Fixes
+
+- **upgrades**: drop unused UsageSite type import ([96676eb](https://github.com/stacksjs/buddy/commit/96676eb)) _(by Chris <chris@stacksjs.com>)_
+- **pkg**: point types at the declaration the build emits ([9ce3ff2](https://github.com/stacksjs/buddy/commit/9ce3ff2)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📝 Documentation
+
+- replace fabricated configuration options with the real API ([64df025](https://github.com/stacksjs/buddy/commit/64df025)) _(by Chris <chris@stacksjs.com>)_
+- position Buddy as AI code review as well as dependency updates ([3209704](https://github.com/stacksjs/buddy/commit/3209704)) _(by Chris <chris@stacksjs.com>)_
+- rebrand to buddy and correct inaccurate API examples ([4af97cf](https://github.com/stacksjs/buddy/commit/4af97cf)) _(by Chris <chris@stacksjs.com>)_
+
+## ✅ Tests
+
+- update fixtures and assertions for the buddy rename ([6332986](https://github.com/stacksjs/buddy/commit/6332986)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.11.0 ([c5c7274](https://github.com/stacksjs/buddy/commit/c5c7274)) _(by Chris <chris@stacksjs.com>)_
+- rebrand launcher, config file, binaries and workflows to buddy ([4689892](https://github.com/stacksjs/buddy/commit/4689892)) _(by Chris <chris@stacksjs.com>)_
+- update deps ([8196b17](https://github.com/stacksjs/buddy/commit/8196b17)) _(by Chris <chris@stacksjs.com>)_
+- **deps**: dtsx 0.11.10 ([81e15e0](https://github.com/stacksjs/buddy/commit/81e15e0)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: dtsx 0.11.8, for declarations that parse ([0bdc279](https://github.com/stacksjs/buddy/commit/0bdc279)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: move to TypeScript 7 ([50242d8](https://github.com/stacksjs/buddy/commit/50242d8)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.10.4...v0.10.5)
+
+## ⚡ Performance Improvements
+
+- **ai**: make the Anthropic SDK an optional peer, resolved on first use ([a316c78](https://github.com/stacksjs/buddy-bot/commit/a316c78)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.10.5 ([7111ccd](https://github.com/stacksjs/buddy-bot/commit/7111ccd)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.10.3...v0.10.4)
+
+## 🐛 Bug Fixes
+
+- **build**: bump bun-plugin-dtsx so the published types parse ([cedc389](https://github.com/stacksjs/buddy-bot/commit/cedc389)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.10.4 ([7064e74](https://github.com/stacksjs/buddy-bot/commit/7064e74)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.10.2...v0.10.3)
+
+## 🐛 Bug Fixes
+
+- **deps**: require importable ts-pantry runtime ([32d709a](https://github.com/stacksjs/buddy-bot/commit/32d709a)) _(by Chris <chris@stacksjs.com>)_
+
+## 💚 Continuous Integration
+
+- keep release binaries only on the latest release ([2536249](https://github.com/stacksjs/buddy-bot/commit/2536249)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.10.3 ([0ed14af](https://github.com/stacksjs/buddy-bot/commit/0ed14af)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.10.1...v0.10.2)
+
+## 💚 Continuous Integration
+
+- bump the pantry action so the changelog actually extracts ([e9a1066](https://github.com/stacksjs/buddy-bot/commit/e9a1066)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.10.2 ([214bd82](https://github.com/stacksjs/buddy-bot/commit/214bd82)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.10.0...v0.10.1)
+
+## 💚 Continuous Integration
+
+- build release binaries and let pantry attach them ([aeae408](https://github.com/stacksjs/buddy-bot/commit/aeae408)) _(by Chris <chrisbreuer93@gmail.com>)_
+- let pantry create the GitHub release so it carries the changelog ([481ad7a](https://github.com/stacksjs/buddy-bot/commit/481ad7a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.10.1 ([60fa734](https://github.com/stacksjs/buddy-bot/commit/60fa734)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.27...v0.10.0)
+
+## ✨ Features
+
+- **setup**: detect the provider from the git remote ([2a6872d](https://github.com/stacksjs/buddy-bot/commit/2a6872d)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#115](https://github.com/stacksjs/buddy-bot/issues/115), [#116](https://github.com/stacksjs/buddy-bot/issues/116))
+- **git**: implement GitLab and Bitbucket providers ([acdd885](https://github.com/stacksjs/buddy-bot/commit/acdd885)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#115](https://github.com/stacksjs/buddy-bot/issues/115), [#116](https://github.com/stacksjs/buddy-bot/issues/116), [#1390](https://github.com/stacksjs/buddy-bot/issues/1390))
+- **agent**: deliver finishing touches as stacked pull requests ([a66a329](https://github.com/stacksjs/buddy-bot/commit/a66a329)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1394](https://github.com/stacksjs/buddy-bot/issues/1394), [#1394](https://github.com/stacksjs/buddy-bot/issues/1394))
+- **scanner**: pnpm catalogs, engines, overrides awareness and base-image EOL ([bc1a59f](https://github.com/stacksjs/buddy-bot/commit/bc1a59f)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1385](https://github.com/stacksjs/buddy-bot/issues/1385), [#1385](https://github.com/stacksjs/buddy-bot/issues/1385), [#1386](https://github.com/stacksjs/buddy-bot/issues/1386), [#1386](https://github.com/stacksjs/buddy-bot/issues/1386), [#107](https://github.com/stacksjs/buddy-bot/issues/107), [#117](https://github.com/stacksjs/buddy-bot/issues/117))
+- **ecosystems**: add Python, Rust, Go and Ruby behind an adapter interface ([48e81ff](https://github.com/stacksjs/buddy-bot/commit/48e81ff)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1385](https://github.com/stacksjs/buddy-bot/issues/1385))
+- **gates**: AI pre-merge checks, post-merge actions and issue quick-links ([dec1a7a](https://github.com/stacksjs/buddy-bot/commit/dec1a7a)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1394](https://github.com/stacksjs/buddy-bot/issues/1394))
+- **reports**: scheduled dependency-health and activity reports ([42b151d](https://github.com/stacksjs/buddy-bot/commit/42b151d)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1389](https://github.com/stacksjs/buddy-bot/issues/1389))
+- **docker**: support every OCI registry, and index Actions advisories ([f0470ec](https://github.com/stacksjs/buddy-bot/commit/f0470ec)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1386](https://github.com/stacksjs/buddy-bot/issues/1386))
+- **cli**: local review, doctor, and headless runs ([f0e93d2](https://github.com/stacksjs/buddy-bot/commit/f0e93d2)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1391](https://github.com/stacksjs/buddy-bot/issues/1391))
+- **analysis**: add six analyzers covering the rest of the first tier ([be91aea](https://github.com/stacksjs/buddy-bot/commit/be91aea)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1392](https://github.com/stacksjs/buddy-bot/issues/1392), [#1378](https://github.com/stacksjs/buddy-bot/issues/1378))
+- **rules**: complete the packageRules engine ([12d282f](https://github.com/stacksjs/buddy-bot/commit/12d282f)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1395](https://github.com/stacksjs/buddy-bot/issues/1395), [#1384](https://github.com/stacksjs/buddy-bot/issues/1384))
+- **upgrades**: wire major-upgrade analysis into pull request creation ([b5255e1](https://github.com/stacksjs/buddy-bot/commit/b5255e1)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1396](https://github.com/stacksjs/buddy-bot/issues/1396), [#1388](https://github.com/stacksjs/buddy-bot/issues/1388))
+- **events**: add runtime event bus and notifications ([11ddd52](https://github.com/stacksjs/buddy-bot/commit/11ddd52)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1387](https://github.com/stacksjs/buddy-bot/issues/1387))
+- **upgrades**: add AI-assisted major upgrade analysis and migration ([39c5abc](https://github.com/stacksjs/buddy-bot/commit/39c5abc)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1388](https://github.com/stacksjs/buddy-bot/issues/1388))
+- **rules**: add packageRules engine ([4332bf0](https://github.com/stacksjs/buddy-bot/commit/4332bf0)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1384](https://github.com/stacksjs/buddy-bot/issues/1384))
+- **workflow**: wire AI features to GitHub events ([1256078](https://github.com/stacksjs/buddy-bot/commit/1256078)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1393](https://github.com/stacksjs/buddy-bot/issues/1393))
+- **issues**: add enrichment and finishing-touch tasks ([4d93b82](https://github.com/stacksjs/buddy-bot/commit/4d93b82)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1380](https://github.com/stacksjs/buddy-bot/issues/1380), [#1383](https://github.com/stacksjs/buddy-bot/issues/1383))
+- **gates**: add pre-merge checks ([bc8f8f7](https://github.com/stacksjs/buddy-bot/commit/bc8f8f7)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1382](https://github.com/stacksjs/buddy-bot/issues/1382))
+- **ci**: add CI failure analysis and auto-fix ([1567193](https://github.com/stacksjs/buddy-bot/commit/1567193)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1381](https://github.com/stacksjs/buddy-bot/issues/1381))
+- **ai**: add learnings and memory ([ab35028](https://github.com/stacksjs/buddy-bot/commit/ab35028)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1379](https://github.com/stacksjs/buddy-bot/issues/1379))
+- **commands**: add @buddy-bot comment commands ([c3f74c8](https://github.com/stacksjs/buddy-bot/commit/c3f74c8)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1376](https://github.com/stacksjs/buddy-bot/issues/1376))
+- **analysis**: add static-analysis orchestration ([bfa2329](https://github.com/stacksjs/buddy-bot/commit/bfa2329)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1378](https://github.com/stacksjs/buddy-bot/issues/1378))
+- **review**: add path filters, path instructions and guideline ingestion ([48eb08f](https://github.com/stacksjs/buddy-bot/commit/48eb08f)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1377](https://github.com/stacksjs/buddy-bot/issues/1377))
+- **review**: add AI pull request review engine ([ca7a0d0](https://github.com/stacksjs/buddy-bot/commit/ca7a0d0)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1375](https://github.com/stacksjs/buddy-bot/issues/1375))
+- **agent**: add secure agent runtime ([fb09bf6](https://github.com/stacksjs/buddy-bot/commit/fb09bf6)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1374](https://github.com/stacksjs/buddy-bot/issues/1374))
+- **ai**: add model-agnostic provider layer ([5c87092](https://github.com/stacksjs/buddy-bot/commit/5c87092)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1373](https://github.com/stacksjs/buddy-bot/issues/1373))
+- **scanner**: finish the ecosystems that were scan-only ([8663565](https://github.com/stacksjs/buddy-bot/commit/8663565)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1372](https://github.com/stacksjs/buddy-bot/issues/1372))
+- **config**: honor options that were typed but never read ([3bb8f50](https://github.com/stacksjs/buddy-bot/commit/3bb8f50)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1371](https://github.com/stacksjs/buddy-bot/issues/1371))
+- **dashboard**: make checkboxes and pinning functional ([6e1db3b](https://github.com/stacksjs/buddy-bot/commit/6e1db3b)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1370](https://github.com/stacksjs/buddy-bot/issues/1370))
+- **pr**: wire auto-merge into PR creation and update-check ([bcf1d45](https://github.com/stacksjs/buddy-bot/commit/bcf1d45)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1369](https://github.com/stacksjs/buddy-bot/issues/1369))
+- **pr**: add auto-merge condition evaluator ([721c395](https://github.com/stacksjs/buddy-bot/commit/721c395)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1369](https://github.com/stacksjs/buddy-bot/issues/1369))
+- **pr**: embed the metadata manifest in generated PR bodies ([d05578e](https://github.com/stacksjs/buddy-bot/commit/d05578e)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1368](https://github.com/stacksjs/buddy-bot/issues/1368))
+- **pr**: add structured PR metadata manifest ([3b09ec6](https://github.com/stacksjs/buddy-bot/commit/3b09ec6)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1368](https://github.com/stacksjs/buddy-bot/issues/1368))
+
+## 🐛 Bug Fixes
+
+- **dashboard**: stop duplicates when a dashboard loses its labels ([20e4685](https://github.com/stacksjs/buddy-bot/commit/20e4685)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#104](https://github.com/stacksjs/buddy-bot/issues/104), [#1355](https://github.com/stacksjs/buddy-bot/issues/1355), [#1356](https://github.com/stacksjs/buddy-bot/issues/1356), [#1397](https://github.com/stacksjs/buddy-bot/issues/1397))
+- wire up the features that were built but unreachable ([349623d](https://github.com/stacksjs/buddy-bot/commit/349623d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ♻️ Code Refactoring
+
+- **git**: extract GitProvider abstraction with capability flags ([6517353](https://github.com/stacksjs/buddy-bot/commit/6517353)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1390](https://github.com/stacksjs/buddy-bot/issues/1390), [#115](https://github.com/stacksjs/buddy-bot/issues/115), [#116](https://github.com/stacksjs/buddy-bot/issues/116))
+- **pr**: read PR state from the manifest instead of markdown ([5a364c4](https://github.com/stacksjs/buddy-bot/commit/5a364c4)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1368](https://github.com/stacksjs/buddy-bot/issues/1368))
+
+## 📝 Documentation
+
+- **agent**: tag fenced blocks with a language ([ded7219](https://github.com/stacksjs/buddy-bot/commit/ded7219)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1374](https://github.com/stacksjs/buddy-bot/issues/1374))
+- **agent**: document modes, tiers and the security model ([6a8e159](https://github.com/stacksjs/buddy-bot/commit/6a8e159)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1374](https://github.com/stacksjs/buddy-bot/issues/1374))
+- **ai**: document provider setup, aliases and budgets ([67e3a3a](https://github.com/stacksjs/buddy-bot/commit/67e3a3a)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1373](https://github.com/stacksjs/buddy-bot/issues/1373))
+- document capped dependencies and pantry.lock's role ([c6e2228](https://github.com/stacksjs/buddy-bot/commit/c6e2228)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1372](https://github.com/stacksjs/buddy-bot/issues/1372))
+- **config**: document PR template tokens and package pinning ([9bfc471](https://github.com/stacksjs/buddy-bot/commit/9bfc471)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1371](https://github.com/stacksjs/buddy-bot/issues/1371))
+- **dashboard**: document working checkboxes and pinning ([b88b51c](https://github.com/stacksjs/buddy-bot/commit/b88b51c)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1370](https://github.com/stacksjs/buddy-bot/issues/1370))
+- document auto-merge conditions and safety rails ([a2dbe05](https://github.com/stacksjs/buddy-bot/commit/a2dbe05)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1369](https://github.com/stacksjs/buddy-bot/issues/1369))
+
+## 🔧 Chores
+
+- release v0.10.0 ([b4e6f25](https://github.com/stacksjs/buddy-bot/commit/b4e6f25)) _(by Chris <chrisbreuer93@gmail.com>)_
+- add release:minor and release:major scripts ([aa946d2](https://github.com/stacksjs/buddy-bot/commit/aa946d2)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.26...v0.9.27)
+
+## 💥 Breaking Changes
+
+- remove unreachable GitLab provider and demo script ([9bea170](https://github.com/stacksjs/buddy-bot/commit/9bea170)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ✨ Features
+
+- **scanner**: find packages capped by a dependant's range, not just outdated ones ([97bd636](https://github.com/stacksjs/buddy-bot/commit/97bd636)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **docker**: detect every container build file convention ([96780b2](https://github.com/stacksjs/buddy-bot/commit/96780b2)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **config**: validate configuration before any work runs ([efd8941](https://github.com/stacksjs/buddy-bot/commit/efd8941)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **security**: detect and prioritise dependencies with known advisories ([7c92b0f](https://github.com/stacksjs/buddy-bot/commit/7c92b0f)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **config**: resolve API and package registry hosts from env and .npmrc ([5c8b356](https://github.com/stacksjs/buddy-bot/commit/5c8b356)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **utils**: add bounded-concurrency map, chunk and async memo ([32c5fca](https://github.com/stacksjs/buddy-bot/commit/32c5fca)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **http**: add fetch wrapper with timeouts and bounded retries ([1077499](https://github.com/stacksjs/buddy-bot/commit/1077499)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **logger**: add log levels and a process-wide default logger ([53e6332](https://github.com/stacksjs/buddy-bot/commit/53e6332)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **net**: bound and authenticate every outbound request ([85b01c0](https://github.com/stacksjs/buddy-bot/commit/85b01c0)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ⚡ Performance Improvements
+
+- **registry**: memoise packuments and parallelise registry lookups ([8edb246](https://github.com/stacksjs/buddy-bot/commit/8edb246)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📝 Documentation
+
+- document security, registry, enterprise and logging options ([1fc8a03](https://github.com/stacksjs/buddy-bot/commit/1fc8a03)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.9.27 ([e31dc6a](https://github.com/stacksjs/buddy-bot/commit/e31dc6a)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([5039f38](https://github.com/stacksjs/buddy-bot/commit/5039f38)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.25...v0.9.26)
+
+## 🐛 Bug Fixes
+
+- **setup**: declare the pin input and stop interpolating PR values into shell ([5f564af](https://github.com/stacksjs/buddy-bot/commit/5f564af)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 👷 Build System
+
+- **deps**: ts-pantry ^0.11.19 ([f3d0f4e](https://github.com/stacksjs/buddy-bot/commit/f3d0f4e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.9.26 ([d158dd8](https://github.com/stacksjs/buddy-bot/commit/d158dd8)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.24...v0.9.25)
+
+## 🐛 Bug Fixes
+
+- **dashboard**: recreate the dashboard issue when it no longer exists ([624102a](https://github.com/stacksjs/buddy-bot/commit/624102a)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **config**: let GITHUB_REPOSITORY override a mismatched configured repo ([104a828](https://github.com/stacksjs/buddy-bot/commit/104a828)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **logger**: log error messages instead of raw Error objects ([2fc441c](https://github.com/stacksjs/buddy-bot/commit/2fc441c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📝 Documentation
+
+- link the community as stacksjs.com/discord ([e6bee14](https://github.com/stacksjs/buddy-bot/commit/e6bee14)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.9.25 ([25f2582](https://github.com/stacksjs/buddy-bot/commit/25f2582)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.23...v0.9.24)
+
+## 📝 Documentation
+
+- normalize v0.9.23 changelog headings ([8081067](https://github.com/stacksjs/buddy-bot/commit/8081067)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.9.24 ([d7d36c0](https://github.com/stacksjs/buddy-bot/commit/d7d36c0)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: update release toolchain ([e4f9202](https://github.com/stacksjs/buddy-bot/commit/e4f9202)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.22...v0.9.23)
+
+## 🐛 Bug Fixes
+
+- **test**: isolate temporary working directories ([f027615](https://github.com/stacksjs/buddy-bot/commit/f027615)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **pr**: render version ranges safely ([3794248](https://github.com/stacksjs/buddy-bot/commit/3794248)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **git**: reject missing update targets ([a32cd52](https://github.com/stacksjs/buddy-bot/commit/a32cd52)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **scanner**: ignore generated dependency trees ([a358b78](https://github.com/stacksjs/buddy-bot/commit/a358b78)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📚 Documentation
+
+- resolve markdown lint violations ([d24f287](https://github.com/stacksjs/buddy-bot/commit/d24f287)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.9.23 ([f0449bc](https://github.com/stacksjs/buddy-bot/commit/f0449bc)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: declare bun ^1.3.14 in deps.yaml ([28b5b24](https://github.com/stacksjs/buddy-bot/commit/28b5b24)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.21...v0.9.22)
+
+## ⚡ Performance Improvements
+
+- **build**: drop external sourcemaps from published package ([3fb2223](https://github.com/stacksjs/buddy-bot/commit/3fb2223)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.9.22 ([2c99ecc](https://github.com/stacksjs/buddy-bot/commit/2c99ecc)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.19...v0.9.20)
+
+## 🚀 Features
+
+- add @stacksjs/gh-audit + buddy-bot security command ([f9cee31](https://github.com/stacksjs/buddy-bot/commit/f9cee31)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **test**: make cli-non-interactive afterEach resilient to cwd churn ([252e48a](https://github.com/stacksjs/buddy-bot/commit/252e48a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **update**: skip groups that can't open a PR before any branch ops ([8408d29](https://github.com/stacksjs/buddy-bot/commit/8408d29)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **template**: add daily cleanup cron back to unified workflow ([0d459cf](https://github.com/stacksjs/buddy-bot/commit/0d459cf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## ♻️ Code Refactoring
+
+- flatten packages/gh-audit into buddy-bot's src/security ([3be6034](https://github.com/stacksjs/buddy-bot/commit/3be6034)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🤖 Continuous Integration
+
+- **buddy-bot**: add daily cleanup cron to workflow ([25ef28a](https://github.com/stacksjs/buddy-bot/commit/25ef28a)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- **buddy-bot**: regenerate workflow from current template ([596ad9d](https://github.com/stacksjs/buddy-bot/commit/596ad9d)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.9.20 ([bbb785b](https://github.com/stacksjs/buddy-bot/commit/bbb785b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- release v0.9.20 ([35ef542](https://github.com/stacksjs/buddy-bot/commit/35ef542)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- update deps ([860fb47](https://github.com/stacksjs/buddy-bot/commit/860fb47)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([e7ee6ab](https://github.com/stacksjs/buddy-bot/commit/e7ee6ab)) _(by Chris <chrisbreuer93@gmail.com>)_
+- refresh bun.lock and apply pickier --fix ([7f1af8a](https://github.com/stacksjs/buddy-bot/commit/7f1af8a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 📄 Miscellaneous
+
+- Revert "chore: release v0.9.20" ([ec3e3f3](https://github.com/stacksjs/buddy-bot/commit/ec3e3f3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.18...v0.9.19)
+
+## 🐛 Bug Fixes
+
+- **test**: restore leaked fs spies in composer test files ([608f506](https://github.com/stacksjs/buddy-bot/commit/608f506)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **test**: restore fs/path spies properly in workspace-detection tests ([9bf8da3](https://github.com/stacksjs/buddy-bot/commit/9bf8da3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **github-provider**: use API for open-PR detection instead of HTML scraping ([2df5b67](https://github.com/stacksjs/buddy-bot/commit/2df5b67)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add setup-bun to publish-commit job ([1a8677e](https://github.com/stacksjs/buddy-bot/commit/1a8677e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- use absolute paths for file writes in configuration migration tests ([720e76d](https://github.com/stacksjs/buddy-bot/commit/720e76d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- correct corrupted actions/checkout version ([5a2029a](https://github.com/stacksjs/buddy-bot/commit/5a2029a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🤖 Continuous Integration
+
+- drop redundant setup-bun (pantry installs bun via deps.yaml) ([b9b49c3](https://github.com/stacksjs/buddy-bot/commit/b9b49c3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.9.19 ([89e07db](https://github.com/stacksjs/buddy-bot/commit/89e07db)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock ([d18d2d6](https://github.com/stacksjs/buddy-bot/commit/d18d2d6)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- lint:fix ([2f01045](https://github.com/stacksjs/buddy-bot/commit/2f01045)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock to pick up latest pickier ([46113e3](https://github.com/stacksjs/buddy-bot/commit/46113e3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fix CI errors ([840cc69](https://github.com/stacksjs/buddy-bot/commit/840cc69)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fresh install to pick up dtsx 0.9.14 and bunfig 0.15.9 ([c105dc0](https://github.com/stacksjs/buddy-bot/commit/c105dc0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fresh install to pick up pickier 0.1.21 ([586ec6b](https://github.com/stacksjs/buddy-bot/commit/586ec6b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fix lint errors ([2e1ceea](https://github.com/stacksjs/buddy-bot/commit/2e1ceea)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- gitignore pantry directory ([455afac](https://github.com/stacksjs/buddy-bot/commit/455afac)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- minor improvements ([d584c48](https://github.com/stacksjs/buddy-bot/commit/d584c48)) _(by Chris <chrisbreuer93@gmail.com>)_
+- auto-fix lint errors ([5dd81d6](https://github.com/stacksjs/buddy-bot/commit/5dd81d6)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- include md in pickier lint extensions ([1bd897a](https://github.com/stacksjs/buddy-bot/commit/1bd897a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update github actions (rebased) (#1350) ([7859374](https://github.com/stacksjs/buddy-bot/commit/7859374)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1350](https://github.com/stacksjs/buddy-bot/issues/1350), [#1350](https://github.com/stacksjs/buddy-bot/issues/1350))
+- update vscode config ([b46400a](https://github.com/stacksjs/buddy-bot/commit/b46400a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- update vscode config ([bdbc971](https://github.com/stacksjs/buddy-bot/commit/bdbc971)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- resolve type issues ([069f978](https://github.com/stacksjs/buddy-bot/commit/069f978)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.17...v0.9.18)
+
+## 🚀 Features
+
+- add pantry.lock support for dependency scanning ([44060c9](https://github.com/stacksjs/buddy-bot/commit/44060c9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.9.18 ([c8d27cb](https://github.com/stacksjs/buddy-bot/commit/c8d27cb)) _(by Chris <chrisbreuer93@gmail.com>)_
+- improve duplicate prevention ([a6c6dfb](https://github.com/stacksjs/buddy-bot/commit/a6c6dfb)) _(by Chris <chrisbreuer93@gmail.com>)_
+- repo cleanup and modernization ([2e644b9](https://github.com/stacksjs/buddy-bot/commit/2e644b9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- repo cleanup and modernization ([4526608](https://github.com/stacksjs/buddy-bot/commit/4526608)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- remove redundant docs/.vitepress ([f8a2980](https://github.com/stacksjs/buddy-bot/commit/f8a2980)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- remove .zed and .cursor folders ([955445c](https://github.com/stacksjs/buddy-bot/commit/955445c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- use Pantry action for publish-commit and add job dependencies ([1952730](https://github.com/stacksjs/buddy-bot/commit/1952730)) _(by Chris <chrisbreuer93@gmail.com>)_
+- update bun-plugin-dtsx to 0.9.13 ([d0f51ec](https://github.com/stacksjs/buddy-bot/commit/d0f51ec)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- update lockfile ([2a1f0e7](https://github.com/stacksjs/buddy-bot/commit/2a1f0e7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- revert bun-plugin-dtsx to 0.9.9 ([3b91a10](https://github.com/stacksjs/buddy-bot/commit/3b91a10)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update all non-major dependencies (rebased) (#1347) ([f5bc809](https://github.com/stacksjs/buddy-bot/commit/f5bc809)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1347](https://github.com/stacksjs/buddy-bot/issues/1347), [#1347](https://github.com/stacksjs/buddy-bot/issues/1347))
+- **deps**: update github actions (rebased) (#1349) ([9f7fe91](https://github.com/stacksjs/buddy-bot/commit/9f7fe91)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1349](https://github.com/stacksjs/buddy-bot/issues/1349), [#1349](https://github.com/stacksjs/buddy-bot/issues/1349))
+- remove file ignores from pickier config ([7e998b5](https://github.com/stacksjs/buddy-bot/commit/7e998b5)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add CLAUDE.md and CHANGELOG.md to pickier ignores ([10bbd3d](https://github.com/stacksjs/buddy-bot/commit/10bbd3d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- remove .pickierignore ([14dd951](https://github.com/stacksjs/buddy-bot/commit/14dd951)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- update better-dx to ^0.2.7 ([d3a9ef9](https://github.com/stacksjs/buddy-bot/commit/d3a9ef9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- update CLAUDE.md with project context and crosswind details ([fc34017](https://github.com/stacksjs/buddy-bot/commit/fc34017)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add proper claude code guidelines ([7d9f0d9](https://github.com/stacksjs/buddy-bot/commit/7d9f0d9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- use pantry monorepo action instead of pantry-setup ([088e756](https://github.com/stacksjs/buddy-bot/commit/088e756)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- ignore claude config in linter ([21f36fa](https://github.com/stacksjs/buddy-bot/commit/21f36fa)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add co-author guideline to claude config ([da273e2](https://github.com/stacksjs/buddy-bot/commit/da273e2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add claude code guidelines ([c415b17](https://github.com/stacksjs/buddy-bot/commit/c415b17)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update github actions (#1346) ([bd9e522](https://github.com/stacksjs/buddy-bot/commit/bd9e522)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1346](https://github.com/stacksjs/buddy-bot/issues/1346), [#1346](https://github.com/stacksjs/buddy-bot/issues/1346))
+- **deps**: update github actions (rebased) (#1345) ([7b41430](https://github.com/stacksjs/buddy-bot/commit/7b41430)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1345](https://github.com/stacksjs/buddy-bot/issues/1345), [#1345](https://github.com/stacksjs/buddy-bot/issues/1345))
+- **deps**: update github actions (rebased) (#1343) ([f6cc854](https://github.com/stacksjs/buddy-bot/commit/f6cc854)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1343](https://github.com/stacksjs/buddy-bot/issues/1343), [#1343](https://github.com/stacksjs/buddy-bot/issues/1343))
+- **deps**: update all non-major dependencies (rebased) (#1344) ([04a7fee](https://github.com/stacksjs/buddy-bot/commit/04a7fee)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1344](https://github.com/stacksjs/buddy-bot/issues/1344), [#1344](https://github.com/stacksjs/buddy-bot/issues/1344))
+- wip ([17ea663](https://github.com/stacksjs/buddy-bot/commit/17ea663)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([6b1bb27](https://github.com/stacksjs/buddy-bot/commit/6b1bb27)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([e0ecbc6](https://github.com/stacksjs/buddy-bot/commit/e0ecbc6)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([397522b](https://github.com/stacksjs/buddy-bot/commit/397522b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([b50af24](https://github.com/stacksjs/buddy-bot/commit/b50af24)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([f9e32b5](https://github.com/stacksjs/buddy-bot/commit/f9e32b5)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 📄 Miscellaneous
+
+- Revert "chore: add claude code guidelines" ([4dc9315](https://github.com/stacksjs/buddy-bot/commit/4dc9315)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.16...v0.9.17)
+
+## 🧹 Chores
+
+- release v0.9.17 ([268efa8](https://github.com/stacksjs/buddy-bot/commit/268efa8)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([59cd14f](https://github.com/stacksjs/buddy-bot/commit/59cd14f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([e219371](https://github.com/stacksjs/buddy-bot/commit/e219371)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update github actions (rebased) (#1314) ([5e076a0](https://github.com/stacksjs/buddy-bot/commit/5e076a0)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1314](https://github.com/stacksjs/buddy-bot/issues/1314), [#1314](https://github.com/stacksjs/buddy-bot/issues/1314))
+- **deps**: update all non-major dependencies (rebased) (#1315) ([d5129da](https://github.com/stacksjs/buddy-bot/commit/d5129da)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1315](https://github.com/stacksjs/buddy-bot/issues/1315), [#1315](https://github.com/stacksjs/buddy-bot/issues/1315))
+- wip ([3e3898f](https://github.com/stacksjs/buddy-bot/commit/3e3898f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([c877550](https://github.com/stacksjs/buddy-bot/commit/c877550)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([6432d08](https://github.com/stacksjs/buddy-bot/commit/6432d08)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([110e7b8](https://github.com/stacksjs/buddy-bot/commit/110e7b8)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([0b8ff9c](https://github.com/stacksjs/buddy-bot/commit/0b8ff9c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([81bb5a9](https://github.com/stacksjs/buddy-bot/commit/81bb5a9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([39fbcfd](https://github.com/stacksjs/buddy-bot/commit/39fbcfd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([231b12f](https://github.com/stacksjs/buddy-bot/commit/231b12f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([e15b271](https://github.com/stacksjs/buddy-bot/commit/e15b271)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([c043ac5](https://github.com/stacksjs/buddy-bot/commit/c043ac5)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.15...v0.9.16)
+
+## 🧹 Chores
+
+- release v0.9.16 ([c319a98](https://github.com/stacksjs/buddy-bot/commit/c319a98)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([2c41b1a](https://github.com/stacksjs/buddy-bot/commit/2c41b1a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.14...v0.9.15)
+
+## 🧹 Chores
+
+- release v0.9.15 ([c06075f](https://github.com/stacksjs/buddy-bot/commit/c06075f))
+- improve determinism ([07f219e](https://github.com/stacksjs/buddy-bot/commit/07f219e))
+- **deps**: update all non-major dependencies (#1313) ([7651a1f](https://github.com/stacksjs/buddy-bot/commit/7651a1f)) ([#1313](https://github.com/stacksjs/buddy-bot/issues/1313), [#1313](https://github.com/stacksjs/buddy-bot/issues/1313))
+- **deps**: update actions/cache action to v5 (#600) ([85fc7ef](https://github.com/stacksjs/buddy-bot/commit/85fc7ef)) ([#600](https://github.com/stacksjs/buddy-bot/issues/600), [#600](https://github.com/stacksjs/buddy-bot/issues/600))
+- wip ([fb3ecae](https://github.com/stacksjs/buddy-bot/commit/fb3ecae))
+- wip ([3131ff2](https://github.com/stacksjs/buddy-bot/commit/3131ff2))
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+- glennmichael123 <gtorregosa@gmail.com>
+- renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.13...v0.9.14)
+
+## 🧹 Chores
+
+- release v0.9.14 ([773f519](https://github.com/stacksjs/buddy-bot/commit/773f519)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([bc9cb6f](https://github.com/stacksjs/buddy-bot/commit/bc9cb6f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([dae827b](https://github.com/stacksjs/buddy-bot/commit/dae827b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.12...v0.9.13)
+
+## 🧹 Chores
+
+- release v0.9.13 ([9b5ca97](https://github.com/stacksjs/buddy-bot/commit/9b5ca97)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([7b1e98d](https://github.com/stacksjs/buddy-bot/commit/7b1e98d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([2cd8dbd](https://github.com/stacksjs/buddy-bot/commit/2cd8dbd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([2fa700c](https://github.com/stacksjs/buddy-bot/commit/2fa700c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([e47439a](https://github.com/stacksjs/buddy-bot/commit/e47439a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([3e775f2](https://github.com/stacksjs/buddy-bot/commit/3e775f2)) _(by Chris <chrisbreuer93@gmail.com>)_
+- several pr update improvements ([7d23ff6](https://github.com/stacksjs/buddy-bot/commit/7d23ff6)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([92a5d5b](https://github.com/stacksjs/buddy-bot/commit/92a5d5b)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([e5c8f56](https://github.com/stacksjs/buddy-bot/commit/e5c8f56)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([90efd28](https://github.com/stacksjs/buddy-bot/commit/90efd28)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([82ef52f](https://github.com/stacksjs/buddy-bot/commit/82ef52f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([bbd16ff](https://github.com/stacksjs/buddy-bot/commit/bbd16ff)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([4d05ef4](https://github.com/stacksjs/buddy-bot/commit/4d05ef4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([d56e66f](https://github.com/stacksjs/buddy-bot/commit/d56e66f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update actions/checkout action to v6 (#401) ([09161b1](https://github.com/stacksjs/buddy-bot/commit/09161b1)) _(by [renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot]))_ ([#401](https://github.com/stacksjs/buddy-bot/issues/401), [#401](https://github.com/stacksjs/buddy-bot/issues/401))
+- wip ([223c63f](https://github.com/stacksjs/buddy-bot/commit/223c63f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _[renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot])_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.10...v0.9.11)
+
+## 🚀 Features
+
+- add Zig support ([7eccc85](https://github.com/stacksjs/buddy-bot/commit/7eccc85))
+
+## 🧹 Chores
+
+- release v0.9.11 ([c2d8df6](https://github.com/stacksjs/buddy-bot/commit/c2d8df6))
+- **deps**: update stacksjs/action-releaser action to v1.2.7 (#391) ([5863dcb](https://github.com/stacksjs/buddy-bot/commit/5863dcb)) ([#391](https://github.com/stacksjs/buddy-bot/issues/391), [#391](https://github.com/stacksjs/buddy-bot/issues/391))
+- **deps**: update all non-major dependencies (#390) ([24a850a](https://github.com/stacksjs/buddy-bot/commit/24a850a)) ([#390](https://github.com/stacksjs/buddy-bot/issues/390), [#390](https://github.com/stacksjs/buddy-bot/issues/390))
+- wip ([525f770](https://github.com/stacksjs/buddy-bot/commit/525f770))
+- **deps**: update dependency ts-pkgx to ^0.4.119 (#389) ([b6dc636](https://github.com/stacksjs/buddy-bot/commit/b6dc636)) ([#389](https://github.com/stacksjs/buddy-bot/issues/389), [#389](https://github.com/stacksjs/buddy-bot/issues/389))
+- wip ([5b97809](https://github.com/stacksjs/buddy-bot/commit/5b97809))
+- wip ([9d28fec](https://github.com/stacksjs/buddy-bot/commit/9d28fec))
+- **deps**: update actions/checkout action to v5 (#119) ([7927301](https://github.com/stacksjs/buddy-bot/commit/7927301)) ([#119](https://github.com/stacksjs/buddy-bot/issues/119), [#119](https://github.com/stacksjs/buddy-bot/issues/119))
+- add cursor rules and improve og-image ([84b01ca](https://github.com/stacksjs/buddy-bot/commit/84b01ca))
+- upgrade action-releaser to v1.2.4 ([269e360](https://github.com/stacksjs/buddy-bot/commit/269e360))
+
+## 📄 Miscellaneous
+
+- Merge pull request #383 from stacksjs/renovate/all-minor-patch ([190780a](https://github.com/stacksjs/buddy-bot/commit/190780a)) ([#383](https://github.com/stacksjs/buddy-bot/issues/383), [#383](https://github.com/stacksjs/buddy-bot/issues/383))
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+- cab-mikee <mike.cabz32@gmail.com>
+- glennmichael123 <gtorregosa@gmail.com>
+- renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.9...v0.9.10)
+
+## 🚀 Features
+
+- enable changelog extraction in GitHub releases ([48d2dbb](https://github.com/stacksjs/buddy-bot/commit/48d2dbb))
+
+## 🧹 Chores
+
+- release v0.9.10 ([e5272c6](https://github.com/stacksjs/buddy-bot/commit/e5272c6))
+- upgrade action-releaser to v1.2.2 ([62fae18](https://github.com/stacksjs/buddy-bot/commit/62fae18))
+- upgrade action-releaser to v1.2.1 ([9116223](https://github.com/stacksjs/buddy-bot/commit/9116223))
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.8...v0.9.9)
+
+## 🐛 Bug Fixes
+
+- use local buddy-bot build in dependency-update job ([ea0e1ae](https://github.com/stacksjs/buddy-bot/commit/ea0e1ae))
+- always merge main into PR branches to prevent CONFLICTING state ([b2b8b7a](https://github.com/stacksjs/buddy-bot/commit/b2b8b7a))
+- merge main into PR branch before applying updates ([4a0f31b](https://github.com/stacksjs/buddy-bot/commit/4a0f31b))
+- run local buddy-bot build in GitHub Actions instead of npm version ([1595ace](https://github.com/stacksjs/buddy-bot/commit/1595ace))
+- ensure satisfied PR check errors are visible in GitHub Actions ([673724e](https://github.com/stacksjs/buddy-bot/commit/673724e))
+
+## 🧹 Chores
+
+- release v0.9.9 ([659bdf6](https://github.com/stacksjs/buddy-bot/commit/659bdf6))
+- wip ([c9ae223](https://github.com/stacksjs/buddy-bot/commit/c9ae223))
+- wip ([84faf6b](https://github.com/stacksjs/buddy-bot/commit/84faf6b))
+- improve checking for satisfied PRs ([6d33d88](https://github.com/stacksjs/buddy-bot/commit/6d33d88))
+- add clapp to dictionary ([9e85f31](https://github.com/stacksjs/buddy-bot/commit/9e85f31))
+- wip ([d3712a6](https://github.com/stacksjs/buddy-bot/commit/d3712a6))
+- wip ([73a8526](https://github.com/stacksjs/buddy-bot/commit/73a8526))
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.7...v0.9.8)
+
+## 🚀 Features
+
+- add Minimum Release Age options ([91e5d18](https://github.com/stacksjs/buddy-bot/commit/91e5d18))
+
+## 🧹 Chores
+
+- release v0.9.8 ([eef0eec](https://github.com/stacksjs/buddy-bot/commit/eef0eec))
+- resolve test error ([ba45081](https://github.com/stacksjs/buddy-bot/commit/ba45081))
+- adjust test for ci ([3a60a4b](https://github.com/stacksjs/buddy-bot/commit/3a60a4b))
+- wip ([3e9dca9](https://github.com/stacksjs/buddy-bot/commit/3e9dca9))
+- lint ([ab22d6b](https://github.com/stacksjs/buddy-bot/commit/ab22d6b))
+- update lockfile ([9394d75](https://github.com/stacksjs/buddy-bot/commit/9394d75))
+- adjust deps ([0edb7f5](https://github.com/stacksjs/buddy-bot/commit/0edb7f5))
+- remove ts-expect-error ([fe315a5](https://github.com/stacksjs/buddy-bot/commit/fe315a5))
+- **deps**: update all non-major dependencies (#216) ([29fd7c7](https://github.com/stacksjs/buddy-bot/commit/29fd7c7)) ([#216](https://github.com/stacksjs/buddy-bot/issues/216), [#216](https://github.com/stacksjs/buddy-bot/issues/216))
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.6...v0.9.7)
+
+## 🧹 Chores
+
+- release v0.9.7 ([c682643](https://github.com/stacksjs/buddy-bot/commit/c682643))
+
+## Contributors
+
+- Adelino Ngomacha <adelinob335@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.5...v0.9.6)
+
+## 🧹 Chores
+
+- release v0.9.6 ([9efd28c](https://github.com/stacksjs/buddy-bot/commit/9efd28c))
+
+## Contributors
+
+- Adelino Ngomacha <adelinob335@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.4...v0.9.5)
+
+## 🧹 Chores
+
+- release v0.9.5 ([fa04837](https://github.com/stacksjs/buddy-bot/commit/fa04837))
+- adjust release script ([6c4cfb8](https://github.com/stacksjs/buddy-bot/commit/6c4cfb8))
+- minify build ([a0c6976](https://github.com/stacksjs/buddy-bot/commit/a0c6976))
+- wip ([fa15aad](https://github.com/stacksjs/buddy-bot/commit/fa15aad))
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.3...HEAD)
+
+## 🧹 Chores
+
+- release v0.9.4 ([2b12ac3](https://github.com/stacksjs/buddy-bot/commit/2b12ac3))
+- update deps ([06100d9](https://github.com/stacksjs/buddy-bot/commit/06100d9))
+- improve readme ([035c7fd](https://github.com/stacksjs/buddy-bot/commit/035c7fd))
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.3...HEAD)
+
+## 🧹 Chores
+
+- update deps ([06100d9](https://github.com/stacksjs/buddy-bot/commit/06100d9))
+- improve readme ([035c7fd](https://github.com/stacksjs/buddy-bot/commit/035c7fd))
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.2...HEAD)
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.1...HEAD)
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.9.0...HEAD)
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.8.10...HEAD)
+
+## Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
+## v0.8.7...main
+
+[compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.8.7...main)
+
+## 🏡 Chore
+
+- Remove the @ symbol ([3000d50](https://github.com/stacksjs/buddy-bot/commit/3000d50))
+
+## ❤️ Contributors
+
+- Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
+
+## v0.8.6...main
+
+[compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.8.6...main)
+
+## 🏡 Chore
+
+- Add `sanitizeMentions` for our PR bodies ([262d4e7](https://github.com/stacksjs/buddy-bot/commit/262d4e7))
+
+## ❤️ Contributors
+
+- Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
+
+## v0.8.6...main
+
+[compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.8.6...main)
+
+## 🏡 Chore
+
+- Add `sanitizeMentions` for our PR bodies ([262d4e7](https://github.com/stacksjs/buddy-bot/commit/262d4e7))
+
+## ❤️ Contributors
+
+- Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
 ## v0.8.5...main
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.8.5...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Remove redundant output ([10c4c41](https://github.com/stacksjs/buddy-bot/commit/10c4c41))
 - Also handle stale branches from today ([01587b4](https://github.com/stacksjs/buddy-bot/commit/01587b4))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -18,11 +1061,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.8.4...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Remove redundant fallback protection ([33958ec](https://github.com/stacksjs/buddy-bot/commit/33958ec))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -30,11 +1073,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.8.3...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Improve cleanup ([80c4d29](https://github.com/stacksjs/buddy-bot/commit/80c4d29))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -42,11 +1085,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.8.2...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Improve git interactions ([90310fa](https://github.com/stacksjs/buddy-bot/commit/90310fa))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -54,11 +1097,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.8.1...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Improve cleanup ([515eef9](https://github.com/stacksjs/buddy-bot/commit/515eef9))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -66,11 +1109,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.8.0...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Cleanup stale branches after 2 days ([5c88d62](https://github.com/stacksjs/buddy-bot/commit/5c88d62))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -78,18 +1121,18 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.13...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Add `cleanup` & `list-branches` ([922ce2b](https://github.com/stacksjs/buddy-bot/commit/922ce2b))
 - Auto clean up stale branches ([910502c](https://github.com/stacksjs/buddy-bot/commit/910502c))
 - Auto close prs that have been ignored ([88f690e](https://github.com/stacksjs/buddy-bot/commit/88f690e))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Test ([ec20bfa](https://github.com/stacksjs/buddy-bot/commit/ec20bfa))
 - Adjust tests ([9fc23e2](https://github.com/stacksjs/buddy-bot/commit/9fc23e2))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -97,11 +1140,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.12...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Update `ts-pkgx` ([8dc1e42](https://github.com/stacksjs/buddy-bot/commit/8dc1e42))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -109,11 +1152,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.11...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Update deps ([e85f052](https://github.com/stacksjs/buddy-bot/commit/e85f052))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -121,12 +1164,12 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.10...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Improve version handling ([64f72c3](https://github.com/stacksjs/buddy-bot/commit/64f72c3))
 - Adjust tests ([d78601c](https://github.com/stacksjs/buddy-bot/commit/d78601c))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -134,12 +1177,12 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.9...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Default to bun latest version ([fc63a14](https://github.com/stacksjs/buddy-bot/commit/fc63a14))
 - Improve dashboard creation & maintenance ([04e4000](https://github.com/stacksjs/buddy-bot/commit/04e4000))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -147,11 +1190,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.8...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Use bun semver ([a79bd5a](https://github.com/stacksjs/buddy-bot/commit/a79bd5a))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -159,15 +1202,15 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.7...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Create pr comment when closing latest pr ([cf519f0](https://github.com/stacksjs/buddy-bot/commit/cf519f0))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Temporarily remove the pin option ([a776ce2](https://github.com/stacksjs/buddy-bot/commit/a776ce2))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -175,11 +1218,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.6...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Improve latest logic ([2d8f8fc](https://github.com/stacksjs/buddy-bot/commit/2d8f8fc))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -187,11 +1230,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.5...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Export helpers ([5fc2f96](https://github.com/stacksjs/buddy-bot/commit/5fc2f96))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -199,11 +1242,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.4...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Add default values ([270c700](https://github.com/stacksjs/buddy-bot/commit/270c700))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -211,11 +1254,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.3...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Add default config ([7d83c8e](https://github.com/stacksjs/buddy-bot/commit/7d83c8e))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -223,11 +1266,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.2...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Rename `rebase-check` to `check` ([463fc1b](https://github.com/stacksjs/buddy-bot/commit/463fc1b))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -235,11 +1278,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.1...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Ensure auto-close is triggered when workflow checks ([016d745](https://github.com/stacksjs/buddy-bot/commit/016d745))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -247,11 +1290,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.7.0...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Auto-close PRs with only latest update ([513780e](https://github.com/stacksjs/buddy-bot/commit/513780e))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -259,11 +1302,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.6.5...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Add `respectLatest` support ([0c5ef94](https://github.com/stacksjs/buddy-bot/commit/0c5ef94))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -271,11 +1314,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.6.4...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Adjust label handling ([e9c4425](https://github.com/stacksjs/buddy-bot/commit/e9c4425))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -283,11 +1326,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.6.3...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Properly set `BUDDY_BOT_TOKEN` ([4ec43e6](https://github.com/stacksjs/buddy-bot/commit/4ec43e6))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -295,12 +1338,12 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.6.2...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Adjust test ([1194771](https://github.com/stacksjs/buddy-bot/commit/1194771))
 - More minor adjustments ([174b24f](https://github.com/stacksjs/buddy-bot/commit/174b24f))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -308,11 +1351,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.6.1...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Minor updates ([65865ee](https://github.com/stacksjs/buddy-bot/commit/65865ee))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -320,11 +1363,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.6.0...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Improve deprecated tests ([4c8b706](https://github.com/stacksjs/buddy-bot/commit/4c8b706))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -332,15 +1375,15 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.28...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Add deprecated deps checker ([8ae30b0](https://github.com/stacksjs/buddy-bot/commit/8ae30b0))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Update deps ([c7af071](https://github.com/stacksjs/buddy-bot/commit/c7af071))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -348,12 +1391,12 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.27...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Minor improvements ([fb844dc](https://github.com/stacksjs/buddy-bot/commit/fb844dc))
 - Adjust timeouts ([a04077e](https://github.com/stacksjs/buddy-bot/commit/a04077e))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -361,11 +1404,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.26...main)
 
-### 🩹 Fixes
+## 🩹 Fixes
 
 - Preserve YAML inline comments when updating deps ([57fc655](https://github.com/stacksjs/buddy-bot/commit/57fc655))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -373,15 +1416,15 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.25...main)
 
-### 🩹 Fixes
+## 🩹 Fixes
 
 - Regenerate & commit file changes when updating existing PRs ([bd38841](https://github.com/stacksjs/buddy-bot/commit/bd38841))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Lint ([3fa0a53](https://github.com/stacksjs/buddy-bot/commit/3fa0a53))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -389,15 +1432,15 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.24...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Lint ([a53810f](https://github.com/stacksjs/buddy-bot/commit/a53810f))
 
-### ✅ Tests
+## ✅ Tests
 
 - Add comprehensive regression tests for dependency constraint preservation ([390ca90](https://github.com/stacksjs/buddy-bot/commit/390ca90))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -405,20 +1448,20 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.23...main)
 
-### 🩹 Fixes
+## 🩹 Fixes
 
 - Prevent package name cross-contamination with word boundaries ([457c43d](https://github.com/stacksjs/buddy-bot/commit/457c43d))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Lint ([14de83e](https://github.com/stacksjs/buddy-bot/commit/14de83e))
 - Remove unused job ([4cad5c2](https://github.com/stacksjs/buddy-bot/commit/4cad5c2))
 
-### ✅ Tests
+## ✅ Tests
 
 - Add comprehensive tests for formatVersionChange method ([362cc90](https://github.com/stacksjs/buddy-bot/commit/362cc90))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -426,11 +1469,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.22...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Improve version change display to preserve constraint formats ([bdc0725](https://github.com/stacksjs/buddy-bot/commit/bdc0725))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -438,11 +1481,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.21...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Simplify user email ([8fe5d2f](https://github.com/stacksjs/buddy-bot/commit/8fe5d2f))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -450,11 +1493,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.20...main)
 
-### 🩹 Fixes
+## 🩹 Fixes
 
 - Use correct github-actions bot email in workflow template ([3e19b41](https://github.com/stacksjs/buddy-bot/commit/3e19b41))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -462,11 +1505,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.19...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Adjust labels ([29bccd4](https://github.com/stacksjs/buddy-bot/commit/29bccd4))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -474,12 +1517,12 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.18...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Resolve test ([34e274b](https://github.com/stacksjs/buddy-bot/commit/34e274b))
 - Properly calculate labels ([1810ac5](https://github.com/stacksjs/buddy-bot/commit/1810ac5))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -491,11 +1534,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.16...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Several improvements ([66a099b](https://github.com/stacksjs/buddy-bot/commit/66a099b))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -503,11 +1546,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.15...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Improve single package prs ([b2c6bfe](https://github.com/stacksjs/buddy-bot/commit/b2c6bfe))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -515,11 +1558,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.14...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - More stability ([4e929e0](https://github.com/stacksjs/buddy-bot/commit/4e929e0))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -527,11 +1570,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.13...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - More pr improvements ([42fe127](https://github.com/stacksjs/buddy-bot/commit/42fe127))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -539,13 +1582,13 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.12...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Adjust title ([d730a68](https://github.com/stacksjs/buddy-bot/commit/d730a68))
 - Adjust copy ([ddf9796](https://github.com/stacksjs/buddy-bot/commit/ddf9796))
 - Rename to `buddy-bot` ([d5cf91a](https://github.com/stacksjs/buddy-bot/commit/d5cf91a))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -553,11 +1596,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.11...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Pr improvements ([6b4e170](https://github.com/stacksjs/buddy-bot/commit/6b4e170))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -565,11 +1608,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.10...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Minor adjustments ([c705cd2](https://github.com/stacksjs/buddy-bot/commit/c705cd2))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -581,11 +1624,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.8...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Improve pr bodies ([418d7dd](https://github.com/stacksjs/buddy-bot/commit/418d7dd))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -593,11 +1636,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.7...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Remove `cache workspace` remnant ([533ff97](https://github.com/stacksjs/buddy-bot/commit/533ff97))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -605,11 +1648,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.6...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Improve pr generation ([67d0df1](https://github.com/stacksjs/buddy-bot/commit/67d0df1))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -617,7 +1660,7 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.2...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Adjust workflow ([c71b89b](https://github.com/stacksjs/buddy-bot/commit/c71b89b))
 - Update lockfile ([786900d](https://github.com/stacksjs/buddy-bot/commit/786900d))
@@ -627,7 +1670,7 @@
 - Wip ([6a74a66](https://github.com/stacksjs/buddy-bot/commit/6a74a66))
 - Wip ([4b9e6a4](https://github.com/stacksjs/buddy-bot/commit/4b9e6a4))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -635,12 +1678,12 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.1...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Improve handling of large pr bodies ([7edd828](https://github.com/stacksjs/buddy-bot/commit/7edd828))
 - Add test note ([f856097](https://github.com/stacksjs/buddy-bot/commit/f856097))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -648,12 +1691,12 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.5.0...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Remove `pin` ([23424d5](https://github.com/stacksjs/buddy-bot/commit/23424d5))
 - Explicitly setup env ([52337a3](https://github.com/stacksjs/buddy-bot/commit/52337a3))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -661,11 +1704,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.4.4...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Add workspace support ([91989ce](https://github.com/stacksjs/buddy-bot/commit/91989ce))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Simplify buddy-bot workflows ([8a09ccc](https://github.com/stacksjs/buddy-bot/commit/8a09ccc))
 - Wip ([a2b310e](https://github.com/stacksjs/buddy-bot/commit/a2b310e))
@@ -675,7 +1718,7 @@
 - Wip ([b85e3ed](https://github.com/stacksjs/buddy-bot/commit/b85e3ed))
 - Wip ([a52c0ea](https://github.com/stacksjs/buddy-bot/commit/a52c0ea))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -683,12 +1726,12 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.4.3...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Adjust setup ([262c876](https://github.com/stacksjs/buddy-bot/commit/262c876))
 - Lint ([ecaeaa1](https://github.com/stacksjs/buddy-bot/commit/ecaeaa1))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -696,11 +1739,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.4.2...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Adjust build for logs ([d833da6](https://github.com/stacksjs/buddy-bot/commit/d833da6))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -708,13 +1751,13 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.4.1...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Adjust readme ([5407cb3](https://github.com/stacksjs/buddy-bot/commit/5407cb3))
 - Rename to `Dependency Dashboard` ([ad9b061](https://github.com/stacksjs/buddy-bot/commit/ad9b061))
 - Minor updates ([bcca7c5](https://github.com/stacksjs/buddy-bot/commit/bcca7c5))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -722,11 +1765,11 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.4.0...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Temporarily use old way ([eaf4bfd](https://github.com/stacksjs/buddy-bot/commit/eaf4bfd))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -734,15 +1777,15 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.2.1...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Add non-interactive, preset and token-setup opts ([93675fc](https://github.com/stacksjs/buddy-bot/commit/93675fc))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - More minor updates ([7657e63](https://github.com/stacksjs/buddy-bot/commit/7657e63))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -750,12 +1793,12 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.2.0...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Delete unused test file ([5376ec8](https://github.com/stacksjs/buddy-bot/commit/5376ec8))
 - Minor setup improvements ([30e05eb](https://github.com/stacksjs/buddy-bot/commit/30e05eb))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -763,7 +1806,7 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.1.0...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Add dependency file updates ([41380a8](https://github.com/stacksjs/buddy-bot/commit/41380a8))
 - Add rebase check ([9125c6e](https://github.com/stacksjs/buddy-bot/commit/9125c6e))
@@ -772,7 +1815,7 @@
 - Improve `includePrerelease` and `excludeMajor` ([0c7b00a](https://github.com/stacksjs/buddy-bot/commit/0c7b00a))
 - Add composer support ([334ae34](https://github.com/stacksjs/buddy-bot/commit/334ae34))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Wip ([e9c6f31](https://github.com/stacksjs/buddy-bot/commit/e9c6f31))
 - Wip ([bce00bf](https://github.com/stacksjs/buddy-bot/commit/bce00bf))
@@ -786,7 +1829,7 @@
 - Improve stability ([e89080c](https://github.com/stacksjs/buddy-bot/commit/e89080c))
 - Add `publish-commit` workflow ([4f18365](https://github.com/stacksjs/buddy-bot/commit/4f18365))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -794,7 +1837,7 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.0.3...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Add GitHub CLI fallback for PR creation ([72411a4](https://github.com/stacksjs/buddy-bot/commit/72411a4))
 - Add GitHub Actions permissions documentation and open-settings command ([e2a518b](https://github.com/stacksjs/buddy-bot/commit/e2a518b))
@@ -802,13 +1845,13 @@
 - Adopt Renovate-style release notes summary format ([d8d81c4](https://github.com/stacksjs/buddy-bot/commit/d8d81c4))
 - Implement Renovate-style package table format ([f3f1c4a](https://github.com/stacksjs/buddy-bot/commit/f3f1c4a))
 
-### 🩹 Fixes
+## 🩹 Fixes
 
 - Update config to avoid GitHub CLI/API issues ([d396a70](https://github.com/stacksjs/buddy-bot/commit/d396a70))
 - Prevent duplicate PR creation in testing workflow ([a296fe1](https://github.com/stacksjs/buddy-bot/commit/a296fe1))
 - Clean up release notes summary duplication ([e9fd53b](https://github.com/stacksjs/buddy-bot/commit/e9fd53b))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Wip ([8011990](https://github.com/stacksjs/buddy-bot/commit/8011990))
 - Wip ([8a108dd](https://github.com/stacksjs/buddy-bot/commit/8a108dd))
@@ -829,7 +1872,7 @@
 - Wip ([1486a81](https://github.com/stacksjs/buddy-bot/commit/1486a81))
 - Wip ([23fc1c6](https://github.com/stacksjs/buddy-bot/commit/23fc1c6))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -837,14 +1880,14 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.0.2...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Wip ([31a967d](https://github.com/stacksjs/buddy-bot/commit/31a967d))
 - Wip ([ce2be50](https://github.com/stacksjs/buddy-bot/commit/ce2be50))
 - Wip ([b986c1a](https://github.com/stacksjs/buddy-bot/commit/b986c1a))
 - Wip ([faf9075](https://github.com/stacksjs/buddy-bot/commit/faf9075))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
@@ -852,20 +1895,19 @@
 
 [compare changes](https://github.com/stacksjs/buddy-bot/compare/v0.0.1...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Wip ([1406390](https://github.com/stacksjs/buddy-bot/commit/1406390))
 - Wip ([94e465f](https://github.com/stacksjs/buddy-bot/commit/94e465f))
 - Wip ([2a1fdb6](https://github.com/stacksjs/buddy-bot/commit/2a1fdb6))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 
 ## ...main
 
-
-### 🏡 Chore
+## 🏡 Chore
 
 - Initial commit ([8424696](https://github.com/stacksjs/buddy-bot/commit/8424696))
 - Wip ([4248bcd](https://github.com/stacksjs/buddy-bot/commit/4248bcd))
@@ -897,8 +1939,7 @@
 - Wip ([2a5af59](https://github.com/stacksjs/buddy-bot/commit/2a5af59))
 - Wip ([e32ab56](https://github.com/stacksjs/buddy-bot/commit/e32ab56))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](https://github.com/chrisbbreuer))
 - Cab-mikee ([@cab-mikee](https://github.com/cab-mikee))
-

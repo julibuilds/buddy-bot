@@ -6,19 +6,19 @@ The `Buddy` class is the main entry point for programmatic dependency management
 
 ```typescript
 interface BuddyConstructor {
-  new(config: BuddyBotConfig, projectPath?: string): Buddy
+  new(config: BuddyConfig, projectPath?: string): Buddy
 }
 ```
 
 ### Parameters
 
-- **config** (`BuddyBotConfig`): Configuration object
+- **config** (`BuddyConfig`): Configuration object
 - **projectPath** (`string`, optional): Project root path (defaults to `process.cwd()`)
 
 ### Example
 
 ```typescript
-import { Buddy } from 'buddy-bot'
+import { Buddy } from '@buddysh/buddy'
 
 const buddy = new Buddy({
   verbose: true,
@@ -52,13 +52,11 @@ interface BuddyMethods {
 
 ```typescript
 interface UpdateScanResult {
+  totalPackages: number
   updates: PackageUpdate[]
   groups: UpdateGroup[]
-  metadata: {
-    scanTime: Date
-    strategy: string
-    packageCount: number
-  }
+  scannedAt: Date
+  duration: number
 }
 ```
 
@@ -101,7 +99,8 @@ if (scanResult.updates.length > 0) {
 
 ### run()
 
-Runs the complete update process (scan + create PRs).
+Runs the complete update process: scans, then creates pull requests when
+`pullRequest` is configured.
 
 ```typescript
 interface BuddyRunMethod {
@@ -199,13 +198,13 @@ Returns the current configuration.
 
 ```typescript
 interface BuddyConfigMethods {
-  getConfig: () => BuddyBotConfig
+  getConfig: () => BuddyConfig
 }
 ```
 
 #### Returns
 
-The current `BuddyBotConfig` object
+The current `BuddyConfig` object
 
 #### Example
 
@@ -216,14 +215,15 @@ console.log(`Strategy: ${config.packages?.strategy}`)
 
 ## Types
 
-### BuddyBotConfig
+### BuddyConfig
 
 Main configuration interface:
 
 ```typescript
-interface BuddyBotConfig {
+interface BuddyConfig {
   verbose?: boolean
   repository?: {
+    /** Only 'github' is implemented; the others are rejected at validation */
     provider: 'github' | 'gitlab' | 'bitbucket'
     owner: string
     name: string
@@ -231,7 +231,9 @@ interface BuddyBotConfig {
     token?: string
   }
   packages?: {
+    /** 'all': every update · 'major': majors only · 'minor': minors and patches · 'patch': patches only */
     strategy: 'major' | 'minor' | 'patch' | 'all'
+    /** Package names, matched exactly */
     ignore?: string[]
     pin?: Record<string, string>
     groups?: PackageGroup[]
@@ -266,11 +268,15 @@ interface PackageUpdate {
   currentVersion: string
   newVersion: string
   updateType: 'major' | 'minor' | 'patch'
-  dependencyType: 'dependencies' | 'devDependencies' | 'peerDependencies' | 'optionalDependencies'
-  repository?: string
+  /** 'dependencies' | 'devDependencies' | 'github-actions' | 'docker-image' | … */
+  dependencyType: Dependency['type']
+  /** Manifest the dependency was found in */
+  file: string
+  metadata?: PackageMetadata
+  releaseNotesUrl?: string
+  changelogUrl?: string
   homepage?: string
-  description?: string
-  changelog?: string
+  securityAdvisories?: SecurityAdvisory[]
 }
 ```
 
@@ -281,9 +287,10 @@ Groups related package updates:
 ```typescript
 interface UpdateGroup {
   name: string
-  title: string
   updates: PackageUpdate[]
-  strategy: string
+  updateType: 'major' | 'minor' | 'patch'
+  title: string
+  body: string
 }
 ```
 
@@ -293,42 +300,48 @@ Result of scanning for updates:
 
 ```typescript
 interface UpdateScanResult {
+  totalPackages: number
   updates: PackageUpdate[]
   groups: UpdateGroup[]
-  metadata: {
-    scanTime: Date
-    strategy: string
-    packageCount: number
-    ignoredCount: number
-  }
+  scannedAt: Date
+  duration: number
 }
 ```
 
 ## Error Handling
 
-The Buddy class throws errors for various failure scenarios:
-
 ### Configuration Errors
 
+The constructor does not validate. A missing `repository` is reported when it
+is needed — `createPullRequests()` logs `Repository configuration required for
+PR creation` and returns without opening anything — so check the configuration
+before you rely on it:
+
 ```typescript
-try {
-  const buddy = new Buddy(invalidConfig)
-}
-catch (error) {
-  if (error.message.includes('Repository configuration required')) {
-    // Handle missing repository config
-  }
-}
+import { Buddy, formatConfigIssues, validateConfig } from '@buddysh/buddy'
+
+const issues = validateConfig(config)
+if (issues.length > 0)
+  throw new Error(formatConfigIssues(issues))
+
+if (!config.repository?.owner || !config.repository?.name)
+  throw new Error('repository.owner and repository.name are required to open pull requests')
+
+const buddy = new Buddy(config)
 ```
 
 ### GitHub Token Errors
+
+When no token can be resolved — neither `repository.token`, nor `GITHUB_TOKEN`,
+nor `BUDDY_TOKEN` — creating the provider throws `No token for github. Set one
+of: GITHUB_TOKEN, BUDDY_TOKEN.`
 
 ```typescript
 try {
   await buddy.createPullRequests(scanResult)
 }
 catch (error) {
-  if (error.message.includes('GITHUB_TOKEN')) {
+  if (error.message.includes('No token for')) {
     // Handle missing or invalid GitHub token
   }
 }
@@ -358,12 +371,12 @@ const buddy = new Buddy({
     groups: [
       {
         name: 'React Ecosystem',
-        packages: ['react', 'react-dom', '@types/react'],
+        patterns: ['react', 'react-dom', '@types/react'],
         strategy: 'minor'
       },
       {
         name: 'Testing Tools',
-        packages: ['jest', '@types/jest', 'testing-library/*'],
+        patterns: ['jest', '@types/jest', 'testing-library/*'],
         strategy: 'patch'
       }
     ]
@@ -395,7 +408,7 @@ if (patchUpdates.length > 0) {
 ### Integration with CI/CD
 
 ```typescript
-import { Buddy } from 'buddy-bot'
+import { Buddy } from '@buddysh/buddy'
 
 async function updateDependencies() {
   const buddy = new Buddy({
@@ -407,6 +420,10 @@ async function updateDependencies() {
     },
     packages: {
       strategy: process.env.UPDATE_STRATEGY as any || 'patch'
+    },
+    // `run()` only opens pull requests when `pullRequest` is configured
+    pullRequest: {
+      labels: ['dependencies']
     }
   })
 

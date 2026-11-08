@@ -18,15 +18,17 @@ export default {
   packages: {
     strategy: 'patch'
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 **When to use:**
+
 - Production applications requiring maximum stability
 - Critical systems where breaking changes must be avoided
 - Security-focused updates only
 
 **Example updates:**
+
 - `react@18.2.0` → `react@18.2.1` ✅
 - `react@18.2.0` → `react@18.3.0` ❌
 - `react@18.2.0` → `react@19.0.0` ❌
@@ -41,22 +43,25 @@ export default {
   packages: {
     strategy: 'minor'
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 **When to use:**
+
 - Most production applications
 - Teams that want new features without breaking changes
 - Gradual adoption of improvements
 
 **Example updates:**
+
 - `typescript@5.1.0` → `typescript@5.1.6` ✅ (patch)
 - `typescript@5.1.0` → `typescript@5.2.0` ✅ (minor)
 - `typescript@5.1.0` → `typescript@6.0.0` ❌ (major)
 
-### `major` - Latest Stable
+### `major` - Breaking Changes Only
 
-Updates to the latest stable version, including major versions with breaking changes.
+Updates major versions and nothing else. Minor and patch bumps are left for a
+run configured to take them.
 
 ```typescript
 // Example: 1.2.3 → 2.0.0
@@ -64,38 +69,58 @@ export default {
   packages: {
     strategy: 'major'
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 **When to use:**
-- Development environments
-- Regular maintenance windows
+
+- A dedicated maintenance window for breaking changes
+- Keeping major upgrades in their own pull requests
 - Teams comfortable with handling breaking changes
 
 **Example updates:**
-- `vue@2.7.0` → `vue@2.7.16` ✅ (patch)
+
 - `vue@2.7.0` → `vue@3.4.0` ✅ (major)
+- `vue@2.7.0` → `vue@2.8.0` ❌ (minor)
+- `vue@2.7.0` → `vue@2.7.16` ❌ (patch)
 
-### `all` - Most Aggressive
+### `all` - Everything
 
-Updates to the absolute latest version available, including pre-releases when no stable version exists.
+Updates everything available, regardless of semver impact — major, minor and
+patch together. This is the default.
 
 ```typescript
 export default {
   packages: {
     strategy: 'all'
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 **When to use:**
+
 - Experimental projects
 - Early adoption teams
-- Testing latest features
+- Staying current across the whole dependency tree
 
 **Example updates:**
-- `next@14.0.0` → `next@15.0.0-rc.1` ✅ (pre-release)
-- `react@18.2.0` → `react@19.0.0-beta.1` ✅ (beta)
+
+- `react@18.2.0` → `react@18.2.1` ✅ (patch)
+- `react@18.2.0` → `react@18.3.0` ✅ (minor)
+- `react@18.2.0` → `react@19.0.0` ✅ (major)
+
+Pre-release versions are a separate switch, not part of the strategy: set
+`packages.includePrerelease` if you want alphas, betas and release candidates
+considered.
+
+### At a Glance
+
+| Strategy | Updates it proposes |
+| --- | --- |
+| `all` | Everything, regardless of semver impact |
+| `major` | Major versions only |
+| `minor` | Minor and patch |
+| `patch` | Patch only |
 
 ## Strategy Configuration
 
@@ -109,7 +134,7 @@ export default {
     strategy: 'minor', // Applied to all packages
     ignore: ['react'] // Except ignored packages
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### Package Groups with Different Strategies
@@ -123,22 +148,22 @@ export default {
     groups: [
       {
         name: 'Core Framework',
-        packages: ['react', 'react-dom', 'vue'],
+        patterns: ['react', 'react-dom', 'vue'],
         strategy: 'minor' // More conservative for core
       },
       {
         name: 'Development Tools',
-        packages: ['eslint', 'prettier', 'typescript'],
-        strategy: 'major' // More aggressive for dev tools
+        patterns: ['eslint', 'prettier', 'typescript'],
+        strategy: 'major' // Dev-tool majors, batched on their own
       },
       {
         name: 'Testing Libraries',
-        packages: ['jest', 'vitest', '@testing-library/*'],
+        patterns: ['jest', 'vitest', '@testing-library/*'],
         strategy: 'minor'
       }
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### Per-Package Strategy Override
@@ -149,14 +174,17 @@ Override strategy for specific packages:
 export default {
   packages: {
     strategy: 'minor',
-    overrides: {
-      'react': 'patch', // Keep React very stable
-      'typescript': 'major', // Always get latest TypeScript
-      '@types/*': 'all' // Type definitions can be aggressive
-    }
+    rules: [
+      { matchPackages: ['react'], strategy: 'patch' }, // Keep React very stable
+      { matchPackages: ['typescript'], strategy: 'major' }, // TypeScript majors only
+      { matchPackages: ['@types/*'], strategy: 'all' } // Types can be aggressive
+    ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
+
+Rules are evaluated in order and later matches override earlier ones per
+field, so a broad rule can set a default and a narrow one refine it.
 
 ## Smart Strategy Selection
 
@@ -164,19 +192,28 @@ Buddy automatically adjusts strategies based on package characteristics:
 
 ### Security Updates
 
-Security patches are always prioritized regardless of strategy:
+Advisories from [OSV.dev](https://osv.dev) are matched against your
+dependencies. With `prioritize` on, those updates are proposed ahead of
+routine ones and carry their own label, so a fix is not queued behind a batch
+of patch bumps:
 
 ```typescript
-// Even with strategy: 'patch', security updates may include minor versions
-const securityConfig = {
-  strategy: 'patch',
-  securityUpdates: {
-    priority: 'high', // Override strategy for security
-    autoApply: true, // Automatically apply security updates
-    minSeverity: 'moderate' // Minimum severity to trigger
+export default {
+  security: {
+    enabled: true,
+    prioritize: true,
+    label: 'security',
+    minimumSeverity: 'moderate' // 'low' | 'moderate' | 'high' | 'critical'
+  },
+  packages: {
+    strategy: 'patch'
   }
-}
+} satisfies BuddyConfig
 ```
+
+Security handling changes ordering and labelling, not the version range: an
+advisory whose fix is a minor release is still subject to the configured
+strategy. Widen `strategy`, or add a rule, if you want those to land.
 
 ### Breaking Change Detection
 
@@ -208,13 +245,13 @@ const week1Config = { strategy: 'patch' }
 // Week 2: Add minor updates
 const week2Config = { strategy: 'minor' }
 
-// Week 3: Add major updates for dev dependencies
+// Week 3: minor everywhere, plus a group that takes dev-tool majors
 const week3Config = {
   strategy: 'minor',
   groups: [
     {
       name: 'Development',
-      packages: ['eslint', 'prettier', 'webpack'],
+      patterns: ['eslint', 'prettier', 'webpack'],
       strategy: 'major'
     }
   ]
@@ -233,9 +270,9 @@ export default {
   packages: {
     strategy: isProduction
       ? (isCorporate ? 'patch' : 'minor')
-      : 'major'
+      : 'all'
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### Ecosystem-Aware Strategies
@@ -249,18 +286,18 @@ const config = {
     groups: [
       {
         name: 'React Ecosystem',
-        packages: ['react*', '@react*'],
+        patterns: ['react*', '@react*'],
         strategy: 'minor' // React ecosystem moves together
       },
       {
         name: 'Node Types',
-        packages: ['@types/node'],
+        patterns: ['@types/node'],
         strategy: 'patch' // Node types should match Node version
       },
       {
         name: 'Build Tools',
-        packages: ['vite', 'rollup', 'esbuild'],
-        strategy: 'major' // Build tools are less breaking
+        patterns: ['vite', 'rollup', 'esbuild'],
+        strategy: 'major' // Build tools get their majors in a PR of their own
       }
     ]
   }
@@ -273,14 +310,17 @@ Override configuration strategies via CLI:
 
 ```bash
 # Force patch strategy regardless of config
-buddy-bot update --strategy patch
+buddy update --strategy patch
 
-# Use major strategy for specific packages
-buddy-bot update --strategy major --packages react,vue
+# Take the major bumps on their own, in a preview run first
+buddy update --strategy major --dry-run
 
-# Mixed strategies
-buddy-bot update --patch typescript --minor react --major eslint
+# Take the majors, but leave two packages behind
+buddy update --strategy major --ignore react,vue
 ```
+
+`--strategy` is a whole-run switch. Per-package strategies are config only —
+use `rules` with `matchPackages`, as above.
 
 ## Monitoring Strategy Effectiveness
 
@@ -306,18 +346,22 @@ const monitoringConfig = {
 
 ```typescript
 export default {
+  security: {
+    enabled: true,
+    prioritize: true,
+    minimumSeverity: 'moderate'
+  },
   packages: {
     strategy: 'patch',
-    securityUpdates: { autoApply: true },
     groups: [
       {
         name: 'Development Only',
-        packages: ['@types/*', 'eslint*', 'prettier'],
+        patterns: ['@types/*', 'eslint*', 'prettier'],
         strategy: 'minor'
       }
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### Balanced Team
@@ -329,17 +373,17 @@ export default {
     groups: [
       {
         name: 'Core Dependencies',
-        packages: ['react', 'vue', 'angular'],
+        patterns: ['react', 'vue', 'angular'],
         strategy: 'patch'
       },
       {
         name: 'Development Tools',
-        packages: ['typescript', 'webpack', 'vite'],
-        strategy: 'major'
+        patterns: ['typescript', 'webpack', 'vite'],
+        strategy: 'all'
       }
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ### Aggressive Startup
@@ -347,16 +391,16 @@ export default {
 ```typescript
 export default {
   packages: {
-    strategy: 'major',
+    strategy: 'all',
     groups: [
       {
         name: 'Database & Infrastructure',
-        packages: ['prisma', 'mongoose', 'redis'],
+        patterns: ['prisma', 'mongoose', 'redis'],
         strategy: 'minor' // More careful with data layers
       }
     ]
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ## Integration with Pull Requests

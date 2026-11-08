@@ -4,26 +4,32 @@ Interactive setup wizard for automated dependency management.
 
 ## Overview
 
-The `setup` command provides a comprehensive, Renovate-like setup experience that guides you through configuring Buddy Bot for your project. It automates the entire process from repository detection to workflow generation.
+The `setup` command provides a comprehensive, Renovate-like setup experience that guides you through configuring Buddy for your project. It automates the entire process from repository detection to workflow generation.
 
 ```bash
-buddy-bot setup [options]
+buddy setup [options]
 ```
+
+`buddy init` is an alias for the same command, for the muscle memory built by
+`npm init` and `git init`.
 
 ## Quick Start
 
 ```bash
 # Interactive setup (recommended)
-buddy-bot setup
+buddy setup
+
+# The same thing, by its alias
+buddy init
 
 # Setup with verbose logging
-buddy-bot setup --verbose
+buddy setup --verbose
 
 # Non-interactive setup with defaults
-buddy-bot setup --non-interactive
+buddy setup --non-interactive
 
 # Non-interactive with specific preset and token setup
-buddy-bot setup --non-interactive --preset testing --token-setup new-pat --verbose
+buddy setup --non-interactive --preset testing --token-setup new-pat --verbose
 ```
 
 ## Enhanced Features
@@ -31,6 +37,7 @@ buddy-bot setup --non-interactive --preset testing --token-setup new-pat --verbo
 The setup wizard provides a comprehensive configuration experience with advanced validation:
 
 ### Core Features
+
 - **🔍 Automatic Repository Detection** - Detects GitHub repository from git remote with API validation
 - **🔑 Enhanced Token Setup** - Comprehensive PAT guidance with scope validation and testing
 - **🔧 Repository Settings Validation** - Real-time GitHub Actions permissions verification
@@ -40,6 +47,7 @@ The setup wizard provides a comprehensive configuration experience with advanced
 - **🎯 Comprehensive Instructions** - Complete setup verification and troubleshooting guidance
 
 ### Advanced Enhancements
+
 - **🛡️ Pre-flight Validation** - Environment checks, conflict detection, and prerequisite validation
 - **📊 Smart Project Analysis** - Automatic detection of project type, package manager, and ecosystem
 - **📈 Interactive Progress Tracking** - Visual progress indicators with step-by-step guidance
@@ -47,11 +55,12 @@ The setup wizard provides a comprehensive configuration experience with advanced
 - **⚙️ Workflow Validation** - Real-time YAML syntax and security validation
 - **🚀 Recovery Capabilities** - Detailed error reporting and setup resumption support
 - **📋 Configuration Migration** - Seamless import from Renovate and Dependabot configurations
-- **🔌 Integration Ecosystem** - Extensible plugin system with Slack, Discord, and Jira integrations
+- **🔌 Integration Ecosystem** - Setup-completion notifications through Slack, Discord, Jira, and custom webhook plugins
 
 ## Setup Flow
 
 ### Configuration Migration & Discovery
+
 ```
 🔍 Configuration Migration Detection:
 Found 1 existing dependency management tool(s):
@@ -63,23 +72,28 @@ Found 1 existing dependency management tool(s):
 📋 Configuration Migration Report
 
 ## RENOVATE Migration
+
 - **Config Found**: ✅ Yes
 - **Confidence**: 🟢 high
 - **Migrated Settings**: schedule, packages, ignore, autoMerge, assignees, reviewers
+
 ```
 
 **Migration Features:**
+
 - **Tool Detection** - Automatically discovers Renovate (`renovate.json`, `.renovaterc`, package.json) and Dependabot (`.github/dependabot.yml`) configurations
-- **Smart Conversion** - Maps Renovate package rules to Buddy Bot groups, converts schedules to workflow presets, and preserves team assignments
+- **Smart Conversion** - Maps Renovate package rules to Buddy groups, converts schedules to workflow presets, and preserves team assignments
 - **Compatibility Analysis** - Identifies unsupported features like `extends` presets and `regexManagers`, provides alternatives and workarounds
 - **Migration Report** - Detailed summary with confidence levels, migrated settings, warnings, and incompatible features
 
 **Supported Migrations:**
+
 - **Renovate**: Schedule patterns, package rules, ignore lists, automerge settings, assignees/reviewers
 - **Dependabot**: Update intervals, ignore patterns, package ecosystem configurations
 - **Confidence Scoring**: High (direct mapping), Medium (partial support), Low (significant incompatibilities)
 
 ### Integration Discovery
+
 ```
 🔌 Integration Discovery:
 Found 2 available integration(s):
@@ -92,37 +106,44 @@ Found 2 available integration(s):
 ```
 
 **Plugin Discovery:**
+
 - **Environment Detection** - Scans for `SLACK_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL`, `JIRA_API_TOKEN` environment variables
 - **File-Based Configuration** - Checks `.buddy/slack-webhook`, `.buddy/discord-webhook`, `.buddy/jira-config.json` files
 - **Custom Plugins** - Loads plugins from `.buddy/plugins/*.json` directory with error handling
 - **Integration Loading** - Automatically enables discovered integrations for setup completion notifications
 
 **Built-in Integrations:**
+
 - **Slack**: Rich setup completion messages with repository details and project information
 - **Discord**: Colorful embed notifications with project type and package manager details
 - **Jira**: Automatic ticket creation for tracking setup completion with project context
 
 ### Pre-flight Validation
+
 ```
-🔍 Pre-flight Validation
-✅ Git repository detected
-✅ Bun v1.2.19 detected
-⚠️  Found 2 existing workflows. Some may conflict with Buddy Bot workflows.
-💡 GitHub CLI detected. This can help with authentication.
+🔍 Pre-flight Validation:
+⚠️  Warnings:
+   • Found 2 existing workflow(s). Some may conflict with Buddy workflows.
+💡 Suggestions:
+   • Using Bun v1.2.19
+   • GitHub CLI detected. This can help with authentication.
 ```
 
 **Environment Checks:**
+
 - **Git repository validation** - Ensures you're in a git repository with proper remote configuration
 - **Runtime environment** - Validates Node.js or Bun installation for optimal performance
 - **Git configuration** - Checks for user.name and user.email configuration
 - **GitHub CLI detection** - Identifies helpful tools for authentication and setup
 
 **Conflict Detection:**
+
 - **Existing workflows** - Scans `.github/workflows/` for potential conflicts
 - **Dependency management tools** - Detects Renovate, Dependabot, or other dependency managers
 - **Configuration conflicts** - Identifies existing configuration that might interfere
 
 ### Smart Project Analysis
+
 ```
 🔍 Project Analysis:
 📦 Project Type: application
@@ -139,6 +160,7 @@ Found 2 available integration(s):
 ```
 
 **Project Intelligence:**
+
 - **Project type detection** - Identifies library, application, monorepo based on package.json and file structure
 - **Package manager analysis** - Detects Bun, npm, yarn, pnpm with lock file validation
 - **Dependency ecosystem** - Finds pkgx.yaml, deps.yaml, and Launchpad dependency files
@@ -146,22 +168,25 @@ Found 2 available integration(s):
 - **Smart recommendations** - Suggests optimal configuration based on detected characteristics
 
 ### Interactive Progress Tracking
+
 ```
-📊 Setup Progress: 75% [███████████████░░░░░]
-🔄 Current Step: Workflow Generation (6/8)
-✅ Completed: Pre-flight checks, Project analysis, Repository Detection, GitHub Token Setup, Repository Settings
+📊 Setup Progress: 80% [████████████████░░░░]
+🔄 Current Step: Workflow Configuration (8/10)
+✅ Completed: Detecting existing configurations, Discovering integrations, Running pre-flight checks, Analyzing project, Repository Detection, GitHub Token Setup, Repository Settings
 ```
 
 **Progress Features:**
+
 - **Visual progress bar** - Real-time completion percentage with graphical indicators
 - **Step tracking** - Clear indication of current step and total progress
 - **Completion history** - Shows which steps have been successfully completed
 - **Time tracking** - Monitors setup duration for performance insights
 - **Recovery support** - Maintains progress state for resumption after interruptions
 
-### Step 3: Repository Detection & Validation
+### Step 5: Repository Detection & Validation
+
 ```
-📍 Step 1: Repository Detection
+📍 Repository Detection
 ✅ Detected repository: your-org/your-repo
 🔗 GitHub URL: https://github.com/your-org/your-repo
 ```
@@ -169,128 +194,146 @@ Found 2 available integration(s):
 Automatically detects your GitHub repository from `git remote get-url origin` and performs comprehensive validation:
 
 **Enhanced Repository Validation:**
+
 - **API connectivity** - Tests GitHub API access and repository permissions
 - **Repository health** - Validates issues are enabled, repository is accessible, and permissions are adequate
 - **Private repository support** - Enhanced validation for private repositories with appropriate token scopes
 - **Organization settings** - Checks for organization-level restrictions that might affect setup
 
-### Step 4: GitHub Token Setup
+### Step 6: GitHub Token Setup
+
 ```
-🔑 Step 2: GitHub Token Setup
-For full functionality, Buddy Bot needs a Personal Access Token (PAT).
+🔑 GitHub Token Setup
+For full functionality, Buddy needs appropriate GitHub permissions.
 This enables workflow file updates and advanced GitHub Actions features.
 ```
 
 Provides three options:
-- **Create new token** - Full guidance through PAT creation process
-- **Have existing token** - Setup for existing PAT
-- **Skip for now** - Use limited GITHUB_TOKEN permissions
 
-### Step 5: Repository Settings
+- **Use organization/repository secrets** - A PAT is already configured as an organization or repository secret
+- **Set up a new Personal Access Token** - Full guidance through PAT creation and secret configuration
+- **Use default GITHUB_TOKEN only** - Limited permissions; workflow file updates will not work
+
+### Step 7: Repository Settings
+
 ```
-🔧 Step 3: Repository Settings
+🔧 Repository Settings
 ```
 
 Guides you through configuring GitHub Actions permissions:
+
 1. Repository settings → Actions → General
 2. Select "Read and write permissions"
 3. Enable "Allow GitHub Actions to create and approve pull requests"
 
-### Step 6: Workflow Configuration
+### Step 8: Workflow Configuration
+
 ```
-⚙️ Step 4: Workflow Configuration
-What type of update schedule would you like?
+⚙️  Workflow Configuration
+? What type of update schedule would you like?
 ```
 
 Choose from carefully crafted presets:
 
 #### Available Presets
 
-| Preset | Description | Dashboard | Updates | Auto-merge |
-|--------|-------------|-----------|---------|------------|
-| **Standard Setup** | Balanced approach for most projects | 3x/week | Mon/Wed/Fri | Patch only |
-| **High Frequency** | Multiple checks per day | Daily | Every 6 hours | Patch only |
-| **Security Focused** | Security-first approach | Daily | Every 4 hours | Security patches |
-| **Minimal Updates** | Low-frequency updates | Weekly | Monday only | Manual |
-| **Development/Testing** | Testing and debugging | Manual | Every 15 min | Disabled |
-| **Custom Configuration** | Build your own schedule | Custom | Custom | Custom |
+| Preset | Description |
+|--------|-------------|
+| **Standard Setup (Recommended)** | Dashboard updates 3x/week, dependency updates on schedule |
+| **High Frequency** | Check for updates multiple times per day |
+| **Security Focused** | Frequent patch updates with security-first approach |
+| **Minimal Updates** | Weekly checks, lower frequency |
+| **Development/Testing** | Manual triggers + frequent checks for testing |
+| **Custom Configuration** | Create your own schedule |
 
-### Step 7: Configuration File Generation
+Each preset writes its own schedule into the workflow — the cadences and per-slot update strategies are live data, not labels. See [Preset Details](#preset-details) for what each generates.
+
+### Step 9: Configuration File Generation
+
 ```
-📝 Step 5: Configuration File
-✅ Created buddy-bot.config.json with your repository settings.
-💡 You can edit this file to customize Buddy Bot's behavior.
+📝 Configuration File
+✅ Created buddy.config.ts with your repository settings.
+💡 You can edit this file to customize Buddy's behavior.
+🔧 The TypeScript config provides better IntelliSense and type safety.
 ```
 
 Creates a complete configuration file with:
+
 - Repository information
 - Dashboard settings
 - Workflow templates
 - Package strategies
 - Default options
 
-### Step 8: Workflow Generation
+### Step 10: Workflow Generation
+
 ```
-🔄 Step 6: Workflow Generation
-✨ Setting up Standard Setup...
-📋 Dashboard updates 3x/week, balanced dependency updates
+🔄 Workflow Generation
+✨ Setting up Standard Project...
+📋 Daily patch updates, weekly minor updates, monthly major updates
+Generated unified buddy workflow (combines check, update, and dashboard)
+Generated GitHub Actions security audit workflow (buddy-security.yml)
+✓ Generated unified workflow in .github/workflows
 ```
 
-Generates three core workflows:
+Generates two workflows:
 
-#### 1. Dashboard Workflow (`buddy-dashboard.yml`)
-- **Schedule**: Monday, Wednesday, Friday at 9 AM UTC
-- **Purpose**: Manages dependency dashboard issue
-- **Features**: Manual triggers, dry-run mode, verbose logging
+#### 1. Unified Workflow (`buddy.yml`)
 
-#### 2. Update Check Workflow (`buddy-check.yml`)
-- **Schedule**: Every 15 minutes
-- **Purpose**: Auto-rebase PRs with checked rebase boxes
-- **Features**: Automatic PR updates, conflict resolution
+- **Schedule**: set by the preset you chose — see [Preset Details](#preset-details). Branch cleanup (daily, 4 AM UTC) and the dependency-health report (Monday, 9 AM UTC) are fixed, because housekeeping is the same job at any cadence
+- **Events**: `pull_request`, `issues`, `issue_comment`, `pull_request_review_comment` and `workflow_run`, so a ticked rebase box or an `@buddy` comment is acted on immediately rather than waited for
+- **Purpose**: One workflow covering checks, updates, the dashboard, reviews and comment commands
+- **Features**: `workflow_dispatch` with a `job` input to run a single job by hand
 
-#### 3. Update Workflow (`buddy-update.yml`)
-- **Schedule**: Based on selected preset
-- **Purpose**: Scheduled dependency updates
-- **Features**: Manual triggers, strategy selection, package filtering
+#### 2. Security Audit Workflow (`buddy-security.yml`)
+
+- **Schedule**: Monday at 6 AM UTC, plus every push and pull request touching `.github/workflows/**`
+- **Purpose**: Static-analyses your GitHub Actions workflows for supply-chain footguns
+- **Features**: Kept separate so its path filters fire independently of the dependency pipeline
+
+If an earlier version of Buddy left `buddy-check.yml`, `buddy-update.yml`, `buddy-dashboard.yml` or `gh-audit.yml` behind, setup deletes them — their jobs now live in `buddy.yml` and `buddy-security.yml`.
 
 ### Workflow Validation & Testing
+
 ```
 🔍 Validating Generated Workflows
-✅ buddy-dashboard.yml validated successfully
-✅ buddy-check.yml validated successfully
-✅ buddy-update.yml validated successfully
 ```
 
+The checks live in `validateWorkflowGeneration`, exported from `@buddysh/buddy/setup`, so you can run them over a workflow of your own as well.
+
 **Validation Features:**
-- **YAML syntax validation** - Ensures all generated workflows are syntactically correct
+
+- **YAML syntax validation** - Ensures a workflow is syntactically correct
 - **Required field verification** - Validates presence of name, on, jobs, and other essential fields
 - **Security best practices** - Checks token usage, permissions, and security configurations
-- **Buddy Bot integration** - Verifies workflows include proper buddy-bot execution commands
+- **Buddy integration** - Verifies workflows include proper buddy execution commands
 - **Permission validation** - Ensures workflows have appropriate permissions for their functions
 
 **Security Validation:**
-- **Token scope verification** - Validates GITHUB_TOKEN vs BUDDY_BOT_TOKEN usage
+
+- **Token scope verification** - Validates GITHUB_TOKEN vs BUDDY_TOKEN usage
 - **Permission matrix** - Ensures workflows have minimum required permissions
 - **Secret handling** - Validates secure handling of tokens and sensitive information
 - **Workflow permissions** - Checks for explicit permission definitions and security boundaries
 
-### Step 9: Final Instructions & Integration Notifications
+### Final Instructions & Integration Notifications
+
 ```
 🎉 Setup Complete!
-✅ Generated 3 core workflows in .github/workflows/:
-   - buddy-dashboard.yml (Dependency Dashboard Management)
-   - buddy-check.yml (Auto-rebase PR checker)
-   - buddy-update.yml (Scheduled dependency updates)
-📁 Configuration file: buddy-bot.config.json
+✅ Generated unified buddy workflow in .github/workflows/:
+   - buddy.yml (Combined check, update, and dashboard management)
+📁 Configuration file: buddy.config.ts
 ```
 
 Provides clear next steps with:
+
 - Git commands for committing changes
 - Token setup instructions (if needed)
 - Repository permissions configuration
 - Links to GitHub settings pages
 
 **Integration Notifications:**
+
 - **Slack Messages** - Rich setup completion notifications with repository details, project type, and package manager information
 - **Discord Embeds** - Colorful setup completion embeds with project metadata and timestamp tracking
 - **Jira Tickets** - Automatic task creation for tracking and documenting setup completion
@@ -313,10 +356,11 @@ For CI/CD pipelines, automated deployments, or when you want to use defaults, th
 
 ```bash
 # Use all defaults (standard preset with default token)
-buddy-bot setup --non-interactive
+buddy setup --non-interactive
 ```
 
 This will:
+
 - ✅ Use the `standard` preset for workflow configuration
 - ✅ Use `default-token` mode (GITHUB_TOKEN with limited functionality)
 - ✅ Skip all interactive prompts and confirmations
@@ -327,13 +371,13 @@ This will:
 
 ```bash
 # High-frequency testing setup with verbose output
-buddy-bot setup --non-interactive --preset testing --verbose
+buddy setup --non-interactive --preset testing --verbose
 
 # Security-focused setup with custom token
-buddy-bot setup --non-interactive --preset security --token-setup new-pat
+buddy setup --non-interactive --preset security --token-setup new-pat
 
 # Standard setup using existing organization secrets
-buddy-bot setup --non-interactive --preset standard --token-setup existing-secret
+buddy setup --non-interactive --preset standard --token-setup existing-secret
 ```
 
 ### Non-Interactive Behavior
@@ -352,84 +396,102 @@ When `--non-interactive` is enabled:
 ### Token Setup Modes
 
 #### `default-token` (Default)
+
 ```bash
-buddy-bot setup --non-interactive --token-setup default-token
+buddy setup --non-interactive --token-setup default-token
 ```
+
 - Uses `GITHUB_TOKEN` provided by GitHub Actions
 - Limited functionality (cannot update workflow files)
 - Suitable for basic dependency updates
 - No additional setup required
 
 #### `existing-secret`
+
 ```bash
-buddy-bot setup --non-interactive --token-setup existing-secret
+buddy setup --non-interactive --token-setup existing-secret
 ```
-- Assumes `BUDDY_BOT_TOKEN` secret already exists
+
+- Assumes `BUDDY_TOKEN` secret already exists
 - Full functionality including workflow file updates
 - Suitable for organizations with pre-configured secrets
 - Best for production environments
 
 #### `new-pat`
+
 ```bash
-buddy-bot setup --non-interactive --token-setup new-pat
+buddy setup --non-interactive --token-setup new-pat
 ```
+
 - Configures for custom Personal Access Token
-- Generates workflows that use `BUDDY_BOT_TOKEN`
+- Generates workflows that use `BUDDY_TOKEN`
 - Requires manual token creation and secret setup
 - Provides warnings about manual steps needed
 
 ### Preset Options
 
+The preset you choose decides the generated workflow's update and dashboard
+schedules, its default update strategy, and whether the generated config turns
+auto-merge on. Branch cleanup and the health report are the same in every
+preset. Nothing is locked in — the `schedule:` block is ordinary YAML you can
+edit afterwards.
+
 #### Standard Preset
+
 ```bash
-buddy-bot setup --non-interactive --preset standard
+buddy setup --non-interactive --preset standard
 ```
-- Balanced approach for most projects
-- Every 2 hours schedule for testing
-- Dry-run enabled by default
-- Manual triggers available
+
+- Reported as **Standard Project**
+- Daily patch updates, weekly minor updates, monthly major updates
+- The default when `--preset` is omitted
 
 #### Testing Preset
+
 ```bash
-buddy-bot setup --non-interactive --preset testing
+buddy setup --non-interactive --preset testing
 ```
+
+- Reported as **Development/Testing**
+- Manual trigger + every 20 minutes (for testing)
 - Optimized for development and testing
-- Every 2 hours schedule with enhanced logging
-- Dry-run mode by default
-- Verbose output and detailed summaries
 
 #### Security Preset
+
 ```bash
-buddy-bot setup --non-interactive --preset security
+buddy setup --non-interactive --preset security
 ```
-- Security-focused configuration
-- Every 2 hours schedule for rapid security updates
-- Enhanced monitoring and reporting
-- Security-first update strategy
+
+- Reported as **Security Focused**
+- Frequent patch updates with security-first approach
+- Suitable for security-critical applications
 
 #### High-Frequency Preset
+
 ```bash
-buddy-bot setup --non-interactive --preset high-frequency
+buddy setup --non-interactive --preset high-frequency
 ```
-- Multiple updates per day
-- Every 2 hours schedule
-- Aggressive update strategy
+
+- Reported as **High Frequency Updates**
+- Check for updates 4 times per day (6AM, 12PM, 6PM, 12AM)
 - Suitable for active development
 
 #### Minimal Preset
+
 ```bash
-buddy-bot setup --non-interactive --preset minimal
+buddy setup --non-interactive --preset minimal
 ```
-- Low-frequency updates
-- Every 2 hours schedule (same as others)
-- Conservative approach
-- Minimal noise and disruption
+
+- Reported as **Minimal Updates**
+- Weekly patch updates, monthly minor/major updates
+- Conservative approach for stable projects
 
 ### CI/CD Integration Examples
 
 #### GitHub Actions Workflow
+
 ```yaml
-name: Setup Buddy Bot
+name: Setup Buddy
 on:
   workflow_dispatch:
     inputs:
@@ -439,6 +501,7 @@ on:
         default: 'standard'
         type: choice
         options:
+
           - standard
           - high-frequency
           - security
@@ -449,11 +512,13 @@ jobs:
   setup:
     runs-on: ubuntu-latest
     steps:
+
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-      - name: Setup Buddy Bot
+      - name: Setup Buddy
+
         run: |
-          bunx buddy-bot setup \
+          bunx @buddysh/buddy setup \
             --non-interactive \
             --preset ${{ github.event.inputs.preset || 'standard' }} \
             --token-setup existing-secret \
@@ -463,6 +528,7 @@ jobs:
 ```
 
 #### Docker Container Setup
+
 ```dockerfile
 FROM oven/bun:latest
 
@@ -471,7 +537,7 @@ COPY package.json bun.lockb ./
 RUN bun install
 
 # Non-interactive setup for containerized environments
-RUN bunx buddy-bot setup \
+RUN bunx @buddysh/buddy setup \
     --non-interactive \
     --preset minimal \
     --token-setup default-token \
@@ -479,13 +545,14 @@ RUN bunx buddy-bot setup \
 ```
 
 #### Shell Script Automation
+
 ```bash
-#!/bin/bash
+# !/bin/bash
 # setup-buddy.sh
 
 set -e
 
-echo "Setting up Buddy Bot for repository..."
+echo "Setting up Buddy for repository..."
 
 # Check if we're in a git repository
 if ! git rev-parse --git-dir > /dev/null 2>&1; then
@@ -502,79 +569,112 @@ elif [[ "$ENVIRONMENT" == "production" ]]; then
 fi
 
 # Run non-interactive setup
-bunx buddy-bot setup \
+bunx @buddysh/buddy setup \
     --non-interactive \
     --preset "$PRESET" \
     --token-setup existing-secret \
     --verbose
 
-echo "Buddy Bot setup complete!"
+echo "Buddy setup complete!"
 ```
 
 ## Generated Files
 
 The setup process creates several files:
 
-### Configuration File (`buddy-bot.config.json`)
-```json
-{
-  "repository": {
-    "owner": "your-org",
-    "name": "your-repo",
-    "provider": "github"
+### Configuration File (`buddy.config.ts`)
+
+```typescript
+import type { BuddyConfig } from '@buddysh/buddy'
+
+const config: BuddyConfig = {
+  repository: {
+    owner: 'your-org',
+    name: 'your-repo',
+    provider: 'github',
+    // Uses GITHUB_TOKEN by default
   },
-  "dashboard": {
-    "enabled": true,
-    "pin": false,
-    "title": "Dependency Dashboard"
+  dashboard: {
+    enabled: true,
+    title: 'Dependency Dashboard',
+    // issueNumber: undefined, // Auto-generated
   },
-  "workflows": {
-    "enabled": true,
-    "outputDir": ".github/workflows",
-    "templates": {
-      "daily": true,
-      "weekly": true,
-      "monthly": true
-    }
+  workflows: {
+    enabled: true,
+    outputDir: '.github/workflows',
+    templates: {
+      daily: true,
+      weekly: true,
+      monthly: true,
+    },
+    custom: [],
   },
-  "packages": {
-    "strategy": "all",
-    "ignore": []
+  packages: {
+    strategy: 'all',
+    ignore: [],
+    ignorePaths: [],
   },
-  "verbose": false
+  verbose: false,
 }
+
+export default config
 ```
 
 ### Workflow Files
 
-#### Dashboard Workflow
+#### Unified Workflow (`buddy.yml`)
+
 ```yaml
-name: Buddy Dashboard
+name: Buddy
 
 on:
+  pull_request:
+    types: [edited, opened, ready_for_review, synchronize, closed]
+
+  issues:
+    types: [edited, opened]
+
+  issue_comment:
+    types: [created]
+
+  pull_request_review_comment:
+    types: [created]
+
+  workflow_run:
+    types: [completed]
+
   schedule:
-    - cron: '0 9 * * 1,3,5' # Monday, Wednesday, Friday at 9 AM UTC
-  workflow_dispatch: # Manual triggering
+
+    - cron: '0 */2 * * *' # Dependency updates
+    - cron: '15 */2 * * *' # Dashboard, 15 minutes behind
+    - cron: '0 4 * * *' # Branch cleanup
+    - cron: '0 9 * * 1' # Weekly dependency-health report
+
+  workflow_dispatch: # Manual trigger, with job/strategy/dry_run inputs
 ```
 
-#### Update Check Workflow
+#### Security Audit Workflow (`buddy-security.yml`)
+
 ```yaml
-name: Buddy Check
+name: GH Actions Security Audit
 
 on:
-  schedule:
-    - cron: '*/15 * * * *' # Check every 15 minutes
-  workflow_dispatch: # Manual trigger
-```
+  push:
+    branches: [main]
+    paths:
 
-#### Update Workflow
-```yaml
-name: Buddy Update
+      - '.github/workflows/**'
 
-on:
+  pull_request:
+    paths:
+
+      - '.github/workflows/**'
+
   schedule:
-    - cron: '0 9 * * 1,3,5' # Mon, Wed, Fri
-  workflow_dispatch: # Manual trigger with options
+
+    - cron: '0 6 * * 1' # Monday 06:00 UTC — weekly drift check
+
+  workflow_dispatch:
 ```
 
 ## Token Setup Guide
@@ -582,13 +682,14 @@ on:
 ### Creating a Personal Access Token
 
 1. **Go to GitHub Settings**
+
    ```
    https://github.com/settings/tokens
    ```
 
 2. **Generate New Token**
    - Click "Generate new token"
-   - Give it a descriptive name (e.g., "buddy-bot-token")
+   - Give it a descriptive name (e.g., "buddy-token")
 
 3. **Select Required Scopes**
    - ✅ `repo` - Full control of private repositories
@@ -599,17 +700,19 @@ on:
    - You won't be able to see it again
 
 5. **Add Repository Secret**
+
    ```
    https://github.com/your-org/your-repo/settings/secrets/actions
    ```
+
    - Click "New repository secret"
-   - Name: `BUDDY_BOT_TOKEN`
+   - Name: `BUDDY_TOKEN`
    - Value: Your generated token
    - Click "Add secret"
 
 ### Token Benefits
 
-| Feature | GITHUB_TOKEN | BUDDY_BOT_TOKEN |
+| Feature | GITHUB_TOKEN | BUDDY_TOKEN |
 |---------|--------------|-----------------|
 | **Package Updates** | ✅ Yes | ✅ Yes |
 | **PR Creation** | ✅ Yes | ✅ Yes |
@@ -621,6 +724,7 @@ on:
 Configure GitHub Actions permissions:
 
 1. **Repository Settings**
+
    ```
    https://github.com/your-org/your-repo/settings/actions
    ```
@@ -631,87 +735,120 @@ Configure GitHub Actions permissions:
    - Click "Save"
 
 3. **Organization Settings** (if applicable)
+
    ```
    https://github.com/organizations/your-org/settings/actions
    ```
+
    - Configure the same permissions as above
    - Organization settings may override repository settings
 
 ## Preset Details
 
+A preset sets four things: when dependency updates run, when the dashboard
+refreshes, which update strategy scheduled runs use, and whether the generated
+`buddy.config.ts` enables auto-merge.
+
+Two schedules are the same in every preset, because housekeeping does not get
+cheaper or riskier with cadence: branch cleanup daily at 4 AM UTC, and a
+dependency-health report on Monday at 9 AM UTC.
+
+Where a preset gives updates and the dashboard the same expression — most of
+them do — one cron entry starts both jobs rather than one of them winning.
+A preset that says `manual` for a schedule gets no scheduled trigger for that
+job at all; run it from the Actions tab.
+
+| Preset | Updates | Dashboard | Strategy | Auto-merge |
+| --- | --- | --- | --- | --- |
+| Standard | `0 9 * * 1,3,5` | same tick | `all` | — |
+| High Frequency | `0 */6 * * *` | `0 9 * * *` | `all` | patch only |
+| Security Focused | `0 */4 * * *` | `0 9 * * *` | `all` | patch only |
+| Minimal | `0 9 * * 1` | same tick | `all` | — |
+| Docker | `0 9 * * 1` | same tick | `all` | — |
+| Monorepo | `0 9 * * *` | same tick | `all` | — |
+| Development/Testing | `*/15 * * * *` | manual | `patch` | — |
+| Custom | manual | manual | `all` | — |
+
+Auto-merge is scoped to patch updates wherever a preset enables it. The preset
+carries a bare on/off, and generating an unconditional auto-merge from that
+would hand a new repository something more dangerous than the preset
+describes — widen it deliberately in `buddy.config.ts` if you want more.
+
 ### Standard Setup (Recommended)
-- **Dashboard**: Monday, Wednesday, Friday at 9 AM UTC
-- **Updates**: Monday, Wednesday, Friday at 9 AM UTC
-- **Strategy**: All updates (major, minor, patch)
-- **Auto-merge**: Disabled (manual review required)
+
+- **Reported as**: Standard Project
+- **Intent**: Daily patch updates, weekly minor updates, monthly major updates
 - **Best for**: Most projects wanting balanced automation
 
 ### High Frequency
-- **Dashboard**: Daily at 9 AM UTC
-- **Updates**: Every 6 hours
-- **Strategy**: All updates
-- **Auto-merge**: Disabled
+
+- **Reported as**: High Frequency Updates
+- **Intent**: Check for updates 4 times per day (6AM, 12PM, 6PM, 12AM)
 - **Best for**: Active projects needing quick updates
 
 ### Security Focused
-- **Dashboard**: Daily at 9 AM UTC
-- **Updates**: Every 4 hours
-- **Strategy**: All updates
-- **Auto-merge**: Disabled
+
+- **Reported as**: Security Focused
+- **Intent**: Frequent patch updates with security-first approach
 - **Best for**: Security-critical applications
 
 ### Minimal Updates
-- **Dashboard**: Weekly on Monday at 9 AM UTC
-- **Updates**: Monday only at 9 AM UTC
-- **Strategy**: All updates
-- **Auto-merge**: Disabled
+
+- **Reported as**: Minimal Updates
+- **Intent**: Weekly patch updates, monthly minor/major updates
 - **Best for**: Stable projects with low change frequency
 
 ### Development/Testing
-- **Dashboard**: Manual trigger only
-- **Updates**: Every 15 minutes
-- **Strategy**: Patch updates only
-- **Auto-merge**: Disabled
-- **Best for**: Testing Buddy Bot functionality
+
+- **Reported as**: Development/Testing
+- **Intent**: Manual trigger + every 20 minutes (for testing)
+- **Best for**: Testing Buddy functionality
 
 ## Post-Setup
 
 After running setup, follow these steps:
 
 ### 1. Review Generated Files
+
 ```bash
 # Check configuration
-cat buddy-bot.config.json
+cat buddy.config.ts
 
 # Review workflows
 ls -la .github/workflows/
 ```
 
 ### 2. Test Setup
+
 ```bash
 # Test repository detection
-buddy-bot scan --verbose
+buddy scan --verbose
 
-# Test dashboard creation
-buddy-bot dashboard --dry-run
+# See what an update run would open, without opening it
+buddy update --dry-run
+
+# Create or refresh the dashboard issue
+buddy dashboard
 ```
 
 ### 3. Commit Changes
+
 ```bash
 # Add generated files
-git add .github/workflows/ buddy-bot.config.json
+git add .github/workflows/ buddy.config.ts
 
 # Commit setup
-git commit -m "Add Buddy Bot dependency management workflows"
+git commit -m "Add Buddy dependency management workflows"
 
 # Push to repository
 git push
 ```
 
 ### 4. Verify Workflows
+
 1. Go to repository **Actions** tab
 2. Verify workflows appear in the list
-3. Test manual trigger on dashboard workflow
+3. Test the manual trigger on the Buddy workflow, picking the `dashboard` job
 4. Check workflow permissions if needed
 
 ## Troubleshooting
@@ -740,59 +877,65 @@ git remote get-url origin
 ### Permission Issues
 
 **"GitHub Actions is not permitted" error:**
+
 1. Check repository settings → Actions → General
 2. Ensure "Read and write permissions" is selected
 3. Enable "Allow GitHub Actions to create and approve pull requests"
 4. Check organization settings if applicable
 
 **Workflow files not updating:**
-1. Ensure `BUDDY_BOT_TOKEN` secret is set
+
+1. Ensure `BUDDY_TOKEN` secret is set
 2. Verify token has `workflow` scope
 3. Check repository permissions above
 
 ### Token Issues
 
 **"Bad credentials" error:**
-1. Verify `GITHUB_TOKEN` or `BUDDY_BOT_TOKEN` is set
+
+1. Verify `GITHUB_TOKEN` or `BUDDY_TOKEN` is set
 2. Check token hasn't expired
 3. Ensure token has required scopes (`repo`, `workflow`)
 
 ## Examples
 
 ### Interactive Setup
+
 ```bash
 # Standard interactive setup (recommended for first-time users)
-buddy-bot setup
+buddy setup
 
 # Interactive setup with detailed logging
-buddy-bot setup --verbose
+buddy setup --verbose
 ```
 
 ### Non-Interactive Setup
+
 ```bash
 # Basic non-interactive setup (uses defaults)
-buddy-bot setup --non-interactive
+buddy setup --non-interactive
 
 # Non-interactive with specific preset
-buddy-bot setup --non-interactive --preset testing --verbose
+buddy setup --non-interactive --preset testing --verbose
 
 # Production setup with existing secrets
-buddy-bot setup --non-interactive --preset security --token-setup existing-secret
+buddy setup --non-interactive --preset security --token-setup existing-secret
 
 # Development setup with new token
-buddy-bot setup --non-interactive --preset testing --token-setup new-pat --verbose
+buddy setup --non-interactive --preset testing --token-setup new-pat --verbose
 ```
 
 ### Testing Setup Locally
+
 ```bash
 # Test repository detection
-buddy-bot setup --verbose
+buddy setup --verbose
 
 # Test non-interactive flow
-buddy-bot setup --non-interactive --preset testing --verbose
+buddy setup --non-interactive --preset testing --verbose
 
 # If setup completes, test scanning
-buddy-bot scan --dry-run
+buddy scan --verbose
 ```
 
 ## Technical Implementation
@@ -802,6 +945,7 @@ buddy-bot scan --dry-run
 The enhanced setup command implements several advanced systems for a robust configuration experience:
 
 #### Pre-flight Validation System
+
 ```typescript
 interface ValidationResult {
   success: boolean
@@ -812,17 +956,20 @@ interface ValidationResult {
 ```
 
 **Environment Validation:**
+
 - **Git repository checks** - Validates `.git` directory and remote configuration
 - **Runtime environment** - Detects and validates Node.js/Bun installation
 - **Configuration validation** - Checks git user.name and user.email settings
 - **Tool detection** - Identifies GitHub CLI and other helpful development tools
 
 **Conflict Detection:**
+
 - **Workflow scanning** - Analyzes `.github/workflows/` for potential conflicts
 - **Tool identification** - Detects Renovate, Dependabot, and other dependency managers
-- **Configuration conflicts** - Identifies existing buddy-bot or similar configurations
+- **Configuration conflicts** - Identifies existing buddy or similar configurations
 
 #### Smart Project Analysis Engine
+
 ```typescript
 interface ProjectAnalysis {
   type: 'library' | 'application' | 'monorepo' | 'unknown'
@@ -836,12 +983,14 @@ interface ProjectAnalysis {
 ```
 
 **Project Intelligence:**
+
 - **Type detection algorithm** - Analyzes package.json structure, workspace configuration, and file patterns
 - **Package manager detection** - Identifies lock files and package manager signatures
 - **Ecosystem analysis** - Scans for pkgx.yaml, deps.yaml, and Launchpad dependency files
 - **Workflow integration** - Discovers existing GitHub Actions for update integration
 
 #### Progress Tracking System
+
 ```typescript
 interface SetupProgress {
   currentStep: number
@@ -855,42 +1004,49 @@ interface SetupProgress {
 ```
 
 **Progress Features:**
+
 - **Visual indicators** - Real-time progress bars with completion percentages
 - **State management** - Tracks completed steps and current progress
 - **Recovery support** - Maintains state for resumption after interruptions
 - **Performance monitoring** - Tracks setup duration and efficiency
 
 #### Repository Validation API
+
 ```typescript
 async function validateRepositoryAccess(repoInfo: RepositoryInfo): Promise<ValidationResult>
 ```
 
 **API-Based Validation:**
+
 - **Repository existence** - Tests GitHub API access and repository availability
 - **Permission validation** - Verifies read/write access and organizational restrictions
 - **Feature availability** - Checks if issues, pull requests, and actions are enabled
 - **Private repository support** - Enhanced validation for private repositories
 
 #### Workflow Validation Engine
+
 ```typescript
 async function validateWorkflowGeneration(workflowContent: string): Promise<ValidationResult>
 ```
 
 **Comprehensive Validation:**
+
 - **YAML syntax validation** - Ensures generated workflows are syntactically correct
 - **Security best practices** - Validates token usage, permissions, and security configurations
-- **Buddy Bot integration** - Verifies workflows include proper execution commands
+- **Buddy integration** - Verifies workflows include proper execution commands
 - **Permission matrix validation** - Ensures workflows have appropriate GitHub Actions permissions
 
 ### Error Handling & Recovery
 
 **Graceful Error Management:**
+
 - **Detailed error reporting** - Comprehensive error messages with suggested solutions
 - **Progressive degradation** - Continues setup where possible when non-critical steps fail
 - **Recovery mechanisms** - Allows resumption from failed steps with state preservation
 - **Rollback capabilities** - Provides mechanisms to undo partial setup on failure
 
 **User Experience Enhancements:**
+
 - **Clear progress indicators** - Visual feedback on setup progression
 - **Contextual help** - Situation-specific guidance and troubleshooting
 - **Intelligent recommendations** - Project-specific suggestions based on analysis

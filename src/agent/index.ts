@@ -1,0 +1,49 @@
+export {
+  AGENT_MODES,
+  fixCiMode,
+  getAgentMode,
+  implementMode,
+  planMode,
+  reviewMode,
+} from './modes'
+export { runPlan } from './plan'
+export type { RunPlanOptions } from './plan'
+export { runAgent, wrapUntrusted } from './runner'
+export {
+  autofixTouch,
+  docstringsTouch,
+  FINISHING_TOUCHES,
+  getFinishingTouch,
+  parseTouchSelections,
+  planTouch,
+  renderTouchOffer,
+  TOUCH_OFFER_MARKER,
+  hasTouchOffer,
+  withTouchOffer,
+  simplifyTouch,
+  unitTestsTouch,
+} from './tasks'
+export type { FinishingTouch, TouchOutput } from './tasks'
+export type { AgentRunOptions } from './runner'
+export { BUILTIN_TOOLS, Toolbelt } from './toolbelt'
+export { fsTools, listDirTool, readFileTool, resolveWorkspacePath, writeFileTool } from './tools/fs'
+export { buildShellEnv, SHELL_ENV_ALLOWLIST, shellTool } from './tools/shell'
+export { ToolPermissionError } from './types'
+export type {
+  AgentContext,
+  AgentMode,
+  AgentRunResult,
+  AgentTool,
+  AgentToolOutput,
+  ToolTier,
+  TranscriptEntry,
+} from './types'
+export {
+  detectChangedFiles,
+  runStackedTouch,
+  stackedBranchName,
+  TEST_COMMANDS,
+  verifyChanges,
+} from './stacked'
+export type { DeliveryMode, StackedOptions, StackedResult, Verification } from './stacked'
+export { createReadIssueTool } from './tools/issue'

@@ -1,76 +1,118 @@
 {
-  "name": "buddy-bot",
+  "name": "@buddysh/buddy",
   "type": "module",
-  "version": "0.8.6",
-  "description": "The Stacks CLI.",
+  "version": "0.11.15",
+  "description": "AI code review and dependency updates in one bot. Reviews pull requests and local changes, answers @buddy comments, gates merges, repairs failing CI, and keeps dependencies current across npm, Composer, Docker, GitHub Actions and more.",
   "author": "Chris Breuer <chris@stacksjs.org>",
   "license": "MIT",
-  "homepage": "https://github.com/stacksjs/buddy-bot",
+  "homepage": "https://github.com/stacksjs/buddy",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/stacksjs/buddy-bot.git"
+    "url": "git+https://github.com/stacksjs/buddy.git"
   },
   "bugs": {
-    "url": "https://github.com/stacksjs/buddy-bot/issues"
+    "url": "https://github.com/stacksjs/buddy/issues"
   },
   "keywords": [
     "buddy",
-    "stacks",
+    "code-review",
+    "ai-code-review",
+    "pull-request-review",
+    "ai",
+    "coderabbit",
+    "dependency-updates",
+    "dependency-management",
+    "renovate",
+    "dependabot",
+    "bot",
     "bun",
     "typescript",
     "javascript"
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./setup": {
+      "types": "./dist/src/setup.d.ts",
+      "import": "./dist/src/setup.js"
+    },
+    "./package.json": "./package.json"
   },
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "module": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "bin": {
-    "buddy-bot": "./dist/bin/cli.js"
+    "buddy": "./dist/bin/cli.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "files": [
     "README.md",
-    "bin",
+    "bin/cli.ts",
     "dist"
   ],
   "scripts": {
     "build": "bun build.ts",
-    "lint": "bunx --bun eslint .",
-    "lint:fix": "bunx --bun eslint . --fix",
+    "build:binaries": "bun build-binaries.ts",
+    "test:binaries": "bun scripts/verify-standalone.ts",
     "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
-    "changelog": "bunx changelogen --output CHANGELOG.md",
     "prepublishOnly": "bun run build",
-    "release": "bun run changelog && bunx bumpp package.json --all",
     "test": "bun test",
+    "test:coverage": "bun test --coverage",
+    "lint": "bunx --bun pickier .",
+    "lint:fix": "bunx --bun pickier . --fix",
+    "format": "bunx --bun pickier . --format",
+    "format:fix": "bunx --bun pickier . --format --write",
+    "changelog": "bunx @stacksjs/logsmith --verbose",
+    "changelog:generate": "bunx @stacksjs/logsmith --output CHANGELOG.md",
+    "release": "bunx --bun @stacksjs/bumpx -r",
     "typecheck": "bunx tsc --noEmit",
-    "dev:docs": "bun --bun vitepress dev docs",
-    "build:docs": "bun --bun vitepress build docs",
-    "preview:docs": "bun --bun vitepress preview docs"
+    "check:docs": "bun scripts/check-docs-claims.ts",
+    "dev:docs": "bun --bun bunpress dev",
+    "build:docs": "bun --bun bunpress build",
+    "preview:docs": "bun --bun bunpress preview --outdir docs/dist",
+    "release:patch": "bunx --bun @stacksjs/bumpx patch --recursive --commit --tag --push --yes",
+    "release:minor": "bunx --bun @stacksjs/bumpx minor --recursive --commit --tag --push --yes",
+    "release:major": "bunx --bun @stacksjs/bumpx major --recursive --commit --tag --push --yes",
+    "deploy:docs": "bun scripts/deploy-docs.ts"
   },
   "dependencies": {
-    "@types/prompts": "^2.4.9",
-    "bunfig": "^0.10.1",
-    "cac": "6.7.14",
     "prompts": "^2.4.2",
-    "ts-pkgx": "0.4.38"
+    "ts-pantry": "^0.11.64"
   },
   "devDependencies": {
-    "@stacksjs/docs": "^0.70.23",
-    "@stacksjs/eslint-config": "^4.14.0-beta.3",
-    "@types/bun": "^1.2.20",
-    "bun-plugin-dtsx": "0.9.5",
-    "typescript": "^5.9.2"
+    "@anthropic-ai/sdk": "^0.122.0",
+    "@stacksjs/bumpx": "^0.2.18",
+    "@stacksjs/bunpress": "^0.2.14",
+    "@stacksjs/clapp": "^0.2.16",
+    "@stacksjs/clarity": "^0.3.33",
+    "@stacksjs/gitlint": "^0.1.8",
+    "@stacksjs/logsmith": "^0.2.11",
+    "@stacksjs/ts-cloud": "^0.12.10",
+    "@types/bun": "^1.4.2",
+    "@types/prompts": "^2.4.9",
+    "bun-git-hooks": "^0.3.3",
+    "bun-plugin-dtsx": "^0.11.13",
+    "bunfig": "^0.15.19",
+    "pickier": "^0.1.65",
+    "typescript": "^7.0.2"
   },
-  "overrides": {
-    "unconfig": "0.3.10"
+  "git-hooks": {
+    "pre-commit": {
+      "staged-lint": {
+        "*.{js,ts,json,yaml,yml,md}": "bunx --bun pickier lint --fix"
+      }
+    },
+    "commit-msg": "bunx gitlint --edit .git/COMMIT_EDITMSG"
   },
-  "simple-git-hooks": {
-    "pre-commit": "bunx lint-staged"
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.117.1 <0.123.0"
   },
-  "lint-staged": {
-    "*.{js,ts}": "bunx eslint . --fix"
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    }
   }
 }

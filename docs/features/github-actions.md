@@ -16,7 +16,7 @@ GitHub Actions integration provides:
 
 Buddy automatically detects GitHub Actions in:
 
-```
+```text
 .github/
 └── workflows/
     ├── ci.yml
@@ -40,13 +40,17 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+
       - name: Checkout repository
+
         uses: actions/checkout@v4 # ← Detected & updated
 
       - name: Setup Bun
+
         uses: oven-sh/setup-bun@v2 # ← Detected & updated
 
       - name: Cache dependencies
+
         uses: actions/cache@v4.1.0 # ← Detected & updated
         with:
           path: ~/.bun
@@ -97,26 +101,38 @@ GitHub Actions updates appear in a dedicated table within pull requests:
 
 ```bash
 # Scan all dependencies including GitHub Actions
-buddy-bot scan
+buddy scan
 
 # Verbose output showing action detection
-buddy-bot scan --verbose
+buddy scan --verbose
 
 # Specific strategy for actions
-buddy-bot scan --strategy minor
+buddy scan --strategy minor
 ```
 
 ### Create Action Update PRs
 
 ```bash
 # Create PRs including action updates
-buddy-bot update
+buddy update
 
 # Dry run to preview action updates
-buddy-bot update --dry-run
+buddy update --dry-run
 
-# Assign action updates to specific team
-buddy-bot update --assignee devops-team
+# Keep the run to minor and patch updates
+buddy update --strategy minor
+```
+
+Reviewers, assignees and labels are not flags — they are set once in `buddy.config.ts` and applied to every PR Buddy opens:
+
+```typescript
+// buddy.config.ts
+export default {
+  pullRequest: {
+    teamReviewers: ['devops'],
+    labels: ['dependencies', 'github-actions'],
+  },
+}
 ```
 
 ## Best Practices

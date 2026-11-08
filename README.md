@@ -6,50 +6,100 @@
 <!-- [![npm downloads][npm-downloads-src]][npm-downloads-href] -->
 <!-- [![Codecov][codecov-src]][codecov-href] -->
 
-# 🐶 Buddy Bot
+# 🐶 Buddy
 
-> Automated dependency updates for the JavaScript and TypeScript ecosystem.
+> AI code review and dependency updates, in one teammate that runs on your CI with your keys.
 
-A modern, fast alternative to Dependabot and Renovate built for the JavaScript and TypeScript ecosystem. Buddy automatically scans your projects for outdated dependencies and creates well-formatted pull requests with detailed changelogs and metadata.
+Buddy does two jobs that usually take two bots and two subscriptions.
 
-![Buddy Bot Pull Request Example](.github/art/screenshot.png)
+It **reviews code** — pull requests and your local working tree — posting inline findings anchored to the lines you changed, answering `@buddy` questions in the thread, gating merges with real check runs, and repairing failing CI when the fix is unambiguous. An alternative to CodeRabbit and friends, except it runs as a step in your own workflow, against a provider you choose, with no third-party app installed on your repository.
+
+It also **manages dependencies** — scanning across npm, Bun, yarn, pnpm, Composer, Docker, GitHub Actions, pkgx, Launchpad, Go, Rust, Python, Ruby and Zig, grouping related packages, fetching real changelogs, and keeping a pinned dashboard issue. An alternative to Dependabot and Renovate, and it will migrate your existing config from either.
+
+Neither half requires the other. Run the reviewer with no dependency workflows, run the updater with no API key, or run both.
+
+![Buddy Pull Request Example](.github/art/screenshot.png)
 
 ## Features
 
-- 🚀 **Lightning Fast**: Built with Bun & performance in mind
-- 🎯 **Smart Updates**: Configurable update strategies _(major, minor, patch, all)_
-- 📦 **Multi-Package Manager**: Supports Bun, npm, yarn, pnpm, Composer, pkgx & Launchpad dependency files
-- ⚡ **GitHub Actions**: Automatically updates workflow dependencies (`actions/checkout@v4`, etc.)
-- 📊 **Dependency Dashboard**: Single GitHub issue with overview of all dependencies and open PRs
-- 🔄 **Rebase Functionality**: Interactive checkbox to update PRs with latest dependency versions
-- 🔍 **Intelligent Scanning**: Uses `bun outdated` and GitHub releases for accurate dependency detection
-- 📋 **Flexible Grouping**: Group related packages for cleaner PRs
-- 🎨 **Rich PR Format**: Three separate tables (npm, Launchpad/pkgx, GitHub Actions) with detailed metadata
-- ⚙️ **Zero Config**: Works out of the box with sensible defaults
-- 🔧 **Highly Configurable**: Customize everything via `buddy-bot.config.ts`
-- 🛠️ **Simple Setup Experience**: Renovate-like interactive setup with validation and smart recommendations
-- 🔍 **Pre-flight Validation**: Environment checks, conflict detection, and prerequisite validation
-- 📊 **Smart Project Analysis**: Automatic project type detection with intelligent recommendations
-- 📋 **Configuration Migration**: Seamless import from Renovate and Dependabot configurations
-- 🔌 **Integration Ecosystem**: Extensible plugin system with Slack, Discord, and Jira integrations
+### 🔍 **AI Code Review**
+
+- **Inline Findings**: _Anchored to changed lines, describing the failure rather than a style preference_
+- **Incremental by Default**: _A second push gets new findings, not the ones you already read_
+- **Conversational**: _`@buddy review`, `full-review`, `summary`, `pause`, `resume`, `rebase`, `remember` — or just ask a question_
+- **Local Review**: _`buddy review` reads your working tree, so problems are found before the PR exists_
+- **Works Without a Key**: _`--light` runs secret scanning, actionlint, shellcheck, hadolint, markdownlint and syntax checks with no model and no network_
+- **Merge Gates**: _Title format, description quality, linked issue and dependency policy published as a check run_
+- **CI Repair**: _`buddy fix-ci` classifies a failing run and opens the fix when it is clear_
+- **Pipeable**: _`--format json`, `github` annotations, or `agent` to hand findings straight to a coding agent_
+- **Your Provider**: _Anthropic, OpenAI, Google, OpenRouter, or any OpenAI-compatible endpoint_
+
+### 🚀 **Performance & Speed**
+
+- **Lightning Fast Execution**: _Built with Bun for maximum performance_
+- **Intelligent Scanning**: _Uses `bun outdated` and GitHub releases API for accurate, real-time dependency detection_
+- **Optimized CI/CD**: _Minimal resource usage with smart caching_
+
+### 📦 **Universal Package Support**
+
+- **Multi-Package Manager**: _Full support for Bun, npm, yarn, pnpm, Composer, Zig, pkgx & Launchpad_
+- **GitHub Actions**: _Automatically updates workflow dependencies (`actions/checkout@v4`, etc.)_
+- **Docker Images**: _Detects and updates Dockerfile base images and versions_
+- **Zig Dependencies**: _Manages build.zig.zon dependencies with URL and hash tracking_
+- **Lock File Awareness**: _Respects and updates all lock file formats_
+
+### 🎯 **Smart Dependency Management**
+
+- **Configurable Update Strategies**: _Choose from major, minor, patch, or all updates_
+- **Flexible Package Grouping**: _Group related packages for cleaner, focused PRs_
+- **Intelligent Conflict Detection**: _Prevents breaking changes with smart dependency analysis_
+- **Security-First Updates**: _Checks every dependency against the [OSV.dev](https://osv.dev) advisory database, and creates vulnerability fixes as their own PR ahead of routine updates_
+
+### 📊 **Rich Dashboard & Monitoring**
+
+- **Dependency Dashboard**: _Centralized GitHub issue with complete dependency overview_
+- **Interactive Rebase**: _One-click PR updates via checkbox interface_
+- **Real-time Status Tracking**: _Live monitoring of all open PRs and pending updates_
+- **Comprehensive Reporting**: _Detailed update summaries with confidence metrics_
+
+### 🎨 **Beautiful Pull Requests**
+
+- **Multi-Format Tables**: _Separate sections for npm, PHP/Composer, Zig, pkgx/Launchpad, and GitHub Actions_
+- **Rich Metadata**: _Confidence badges, adoption metrics, age indicators, and download stats_
+- **Detailed Changelogs**: _Automatic release notes and breaking change detection_
+- **Professional Formatting**: _Clean, readable PR descriptions with proper categorization_
+
+### ⚙️ **Developer Experience**
+
+- **Zero Configuration**: _Works immediately with intelligent defaults_
+- **Interactive Setup**: _Renovate-like guided configuration with validation_
+- **Migration Tools**: _Seamless import from existing Renovate and Dependabot setups_
+- **TypeScript Config**: _Full type safety with `buddy.config.ts`_
+
+### 🔌 **Extensible Integration**
+
+- **Plugin Ecosystem**: _Built-in Slack, Discord, and Jira integrations_
+- **Custom Hooks**: _Extensible system for organization-specific workflows_
+- **CI/CD Ready**: _Pre-built GitHub Actions workflows for all use cases_
+- **API Access**: _Programmatic control for advanced automation_
 
 ## Quick Start
 
 ```bash
 # Install globally
-bun add -g buddy-bot
+bun add -g @buddysh/buddy
 
 # Interactive setup (recommended)
-buddy-bot setup
+buddy setup
 
 # Non-interactive setup for CI/CD
-buddy-bot setup --non-interactive
+buddy setup --non-interactive
 
 # Non-interactive with specific preset
-buddy-bot setup --non-interactive --preset testing --verbose
+buddy setup --non-interactive --preset testing --verbose
 
 # Or run directly for scanning only
-buddy-bot scan
+buddy scan
 ```
 
 ## Usage
@@ -59,7 +109,7 @@ buddy-bot scan
 The easiest way to get started is with the interactive setup command:
 
 ```bash
-buddy-bot setup
+buddy setup
 ```
 
 This comprehensive setup wizard will guide you through configuring automated dependency updates for your project in a Renovate-like experience.
@@ -70,66 +120,75 @@ For CI/CD pipelines and automated deployments, use the non-interactive mode:
 
 ```bash
 # Basic non-interactive setup (uses defaults)
-buddy-bot setup --non-interactive
+buddy setup --non-interactive
 
 # Specify preset and token setup
-buddy-bot setup --non-interactive --preset testing --token-setup existing-secret --verbose
+buddy setup --non-interactive --preset testing --token-setup existing-secret --verbose
 
 # Production setup with security focus
-buddy-bot setup --non-interactive --preset security --token-setup existing-secret
+buddy setup --non-interactive --preset security --token-setup existing-secret
 ```
 
 **Available options:**
+
 - `--non-interactive` - Skip all prompts, use defaults
 - `--preset <type>` - Workflow preset: `standard`, `high-frequency`, `security`, `minimal`, `testing` (default: `standard`)
 - `--token-setup <type>` - Token mode: `default-token`, `existing-secret`, `new-pat` (default: `default-token`)
 
 The setup process includes:
 
-**🔍 Pre-flight Validation**
+#### 🔍 Pre-flight Validation
+
 - **Environment checks** - Validates git repository, Node.js/Bun installation
 - **Conflict detection** - Scans for existing dependency management tools (Renovate, Dependabot)
 - **Git configuration** - Ensures proper git user setup
 - **GitHub CLI detection** - Suggests helpful tools for authentication
 
-**📊 Smart Project Analysis**
+#### 📊 Smart Project Analysis
+
 - **Project type detection** - Identifies library, application, monorepo, or unknown projects
 - **Package manager detection** - Detects Bun, npm, yarn, pnpm with lock file validation
 - **Dependency ecosystem analysis** - Finds pkgx, Launchpad dependency files
 - **GitHub Actions discovery** - Scans existing workflows for updates
 - **Intelligent recommendations** - Suggests optimal setup based on project characteristics
 
-**📈 Interactive Progress Tracking**
+#### 📈 Interactive Progress Tracking
+
 - **Visual progress bar** - Real-time completion percentage with progress indicators
 - **Step-by-step guidance** - Clear indication of current and completed steps
 - **Time tracking** - Setup duration monitoring
 - **Recovery capabilities** - Resume from failures with detailed error reporting
 
 **📋 Step 1: Configuration Migration & Discovery**
+
 - **Tool Detection** - Automatically detects existing Renovate and Dependabot configurations
 - **Seamless Migration** - Imports settings, schedules, package rules, and ignore patterns
 - **Compatibility Analysis** - Identifies incompatible features and provides alternatives
 - **Migration Report** - Detailed summary of migrated settings and confidence levels
 
-**🔌 Step 2: Integration Discovery**
+#### 🔌 Step 2: Integration Discovery
+
 - **Plugin Discovery** - Automatically detects available integrations (Slack, Discord, Jira)
 - **Environment Detection** - Scans for webhook URLs, API tokens, and configuration files
 - **Plugin Loading** - Enables discovered integrations for setup completion notifications
 - **Custom Plugins** - Supports custom plugin definitions in `.buddy/plugins/` directory
 
 **🔍 Step 3: Repository Detection & Validation**
+
 - Automatically detects your GitHub repository from git remote
 - **API validation** - Tests repository access and permissions via GitHub API
 - **Repository health checks** - Validates issues, permissions, and settings
 - **Private repository support** - Enhanced validation for private repositories
 
-**🔑 Step 4: Enhanced Token Setup**
+#### 🔑 Step 4: Enhanced Token Setup
+
 - Guides you through creating a Personal Access Token (PAT)
 - **Scope validation** - Explains required scopes (`repo`, `workflow`) with examples
 - **Token testing** - Validates token permissions before proceeding
 - Helps set up repository secrets for enhanced features
 
-**🔧 Step 5: Repository Settings Validation**
+#### 🔧 Step 5: Repository Settings Validation
+
 - Walks you through GitHub Actions permissions configuration
 - **Permission verification** - Tests workflow permissions in real-time
 - **Organization settings** - Guidance for organization-level permissions
@@ -145,29 +204,33 @@ Choose from several carefully crafted presets with smart recommendations:
 - **Development/Testing** - Manual triggers + frequent checks for testing
 - **Custom Configuration** - Advanced schedule builder with cron preview
 
-**📝 Step 7: Enhanced Configuration Generation**
-- Creates `buddy-bot.config.json` with repository-specific settings
+#### 📝 Step 7: Enhanced Configuration Generation
+
+- Creates `buddy.config.ts` with repository-specific settings
 - **Project-aware defaults** - Configuration optimized for detected project type
 - **Ecosystem integration** - Includes detected package managers and dependency files
 - Includes sensible defaults and customization options
 
 **🔄 Step 8: Workflow Generation & Validation**
-- Generates three core GitHub Actions workflows:
-  - `buddy-dashboard.yml` - Dependency Dashboard Management
-  - `buddy-check.yml` - Auto-rebase PR checker
-  - `buddy-update.yml` - Scheduled dependency updates
+
+- Generates two GitHub Actions workflows:
+  - `buddy.yml` - Unified workflow (rebase checks, dependency updates, dashboard management)
+  - `buddy-security.yml` - Security audit, kept separate so it can trigger on its own path filters
+- Removes stale `buddy-check.yml`, `buddy-update.yml` and `buddy-dashboard.yml` files from earlier versions
 - **YAML validation** - Ensures generated workflows are syntactically correct
 - **Security best practices** - Validates token usage and permissions
 - **Workflow testing** - Verifies generated workflows meet requirements
 
 **🎯 Step 9: Comprehensive Validation & Instructions**
+
 - **Setup verification** - Validates all generated files and configurations
 - **Workflow testing** - Tests generated workflow syntax and requirements
 - **Clear next steps** - Git commands and repository setup instructions
 - **Documentation links** - Direct links to GitHub settings pages
 - **Troubleshooting guide** - Common issues and solutions
 
-**🔌 Step 10: Integration Notifications**
+#### 🔌 Step 10: Integration Notifications
+
 - **Plugin Execution** - Executes loaded integration hooks for setup completion
 - **Slack Notifications** - Rich setup completion messages with repository details
 - **Discord Embeds** - Colorful setup completion notifications with project information
@@ -190,7 +253,7 @@ buddy scan --verbose
 buddy scan --packages "react,typescript,@types/node"
 
 # Check packages with glob patterns
-buddy scan --pattern "@types/*"
+buddy scan --pattern "@types/_"
 
 # Apply different update strategies
 buddy scan --strategy minor
@@ -206,17 +269,17 @@ buddy update-check --dry-run
 buddy update-check --verbose
 
 # Get help
-buddy help
+buddy --help
 ```
 
 ### Configuration
 
-Create a `buddy-bot.config.ts` file in your project root:
+Create a `buddy.config.ts` file in your project root:
 
 ```typescript
-import type { BuddyBotConfig } from 'buddy-bot'
+import type { BuddyConfig } from '@buddysh/buddy'
 
-const config: BuddyBotConfig = {
+const config: BuddyConfig = {
   verbose: false,
 
   // Repository settings for PR creation
@@ -279,7 +342,7 @@ export default config
 
 ## Configuration Migration
 
-Buddy Bot can automatically migrate your existing dependency management configurations from Renovate and Dependabot, making the transition seamless.
+Buddy can automatically migrate your existing dependency management configurations from Renovate and Dependabot, making the transition seamless.
 
 ### Supported Migration Sources
 
@@ -289,16 +352,16 @@ Buddy Bot can automatically migrate your existing dependency management configur
 ### Migration Process
 
 1. **Automatic Detection** - Scans for existing configuration files
-2. **Smart Conversion** - Maps settings to Buddy Bot equivalents
+2. **Smart Conversion** - Maps settings to Buddy equivalents
 3. **Compatibility Check** - Identifies unsupported features
 4. **Migration Report** - Provides detailed conversion summary
 
 ```bash
 # Migration happens automatically during setup
-buddy-bot setup
+buddy setup
 
 # Or use programmatically
-import { ConfigurationMigrator } from 'buddy-bot/setup'
+import { ConfigurationMigrator } from '@buddysh/buddy/setup'
 
 const migrator = new ConfigurationMigrator()
 const tools = await migrator.detectExistingTools()
@@ -307,7 +370,7 @@ const result = await migrator.migrateFromRenovate('renovate.json')
 
 ### Migrated Settings
 
-| Renovate | Dependabot | Buddy Bot | Notes |
+| Renovate | Dependabot | Buddy | Notes |
 |----------|------------|-----------|-------|
 | `schedule` | `schedule.interval` | Workflow presets | Mapped to Standard/High-Frequency/Minimal |
 | `packageRules` | `ignore` | Package groups & ignore lists | Preserves grouping logic |
@@ -316,11 +379,12 @@ const result = await migrator.migrateFromRenovate('renovate.json')
 
 ## Integration Ecosystem
 
-Buddy Bot includes an extensible plugin system that enables integrations with popular collaboration and project management tools.
+Buddy includes a setup-time plugin system that notifies your collaboration tools when `buddy setup` completes. (Runtime events — scans, pull requests, merges — go through the `notifications` key in `buddy.config.ts` instead; that is the system a new integration should hook into.)
 
 ### Built-in Integrations
 
 #### Slack Integration
+
 ```bash
 # Set environment variable
 export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
@@ -330,12 +394,13 @@ echo "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK" > .buddy/slack-webhoo
 ```
 
 **Features:**
+
 - Rich setup completion notifications
 - Repository and project details
-- Error notifications for setup failures
-- Configurable channel and username
+- Reads the webhook from the env var, or from the `.buddy/slack-webhook` file
 
 #### Discord Integration
+
 ```bash
 # Set environment variable
 export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/YOUR/DISCORD/WEBHOOK"
@@ -345,12 +410,14 @@ echo "https://discord.com/api/webhooks/YOUR/DISCORD/WEBHOOK" > .buddy/discord-we
 ```
 
 **Features:**
+
 - Colorful embed notifications
 - Project type and package manager details
 - Timestamp tracking
 - Setup completion confirmations
 
 #### Jira Integration
+
 ```bash
 # Set environment variables
 export JIRA_API_TOKEN="your-jira-api-token"
@@ -359,6 +426,7 @@ export JIRA_PROJECT_KEY="BUDDY"  # Optional, defaults to BUDDY
 ```
 
 **Features:**
+
 - Automatic ticket creation for setup completion
 - Repository and project context
 - Configurable project keys
@@ -369,47 +437,53 @@ export JIRA_PROJECT_KEY="BUDDY"  # Optional, defaults to BUDDY
 Create custom integrations by defining plugins in `.buddy/plugins/`:
 
 ```jsonc
-// .buddy/plugins/custom-integration.json
+// .buddy/plugins/custom-notify.json
 {
-  "name": "custom-integration",
+  "name": "custom-notify",
   "version": "1.0.0",
   "enabled": true,
   "triggers": [
-    { "event": "setup_complete" },
-    { "event": "validation_error" }
+    { "event": "setup_complete" }
   ],
   "hooks": [
     {
-      "name": "custom-notification",
+      "name": "notify",
       "priority": 10,
-      "async": true,
-      "handler": "// Custom JavaScript function"
+      "action": {
+        "type": "webhook",
+        "url": "https://your-webhook.com/notify",
+        "body": { "channel": "#builds" }
+      }
     }
-  ],
-  "configuration": {
-    "webhook_url": "https://your-custom-webhook.com/notify",
-    "api_key": "your-api-key"
-  }
+  ]
 }
 ```
 
+A hook declares an `action` rather than a function. JSON has no way to carry
+one, and reading a string out of a config file to run as code would turn any
+`.buddy/plugins/*.json` in a repository into arbitrary code execution on
+whoever runs `buddy setup`. The payload names the event and the repository
+and nothing else, plus whatever `body` adds — setup holds a token by the time
+hooks run, and the plugin file chooses the URL.
+
 ### Plugin Events
 
-| Event | Description | Context |
-|-------|-------------|---------|
-| `pre_setup` | Before setup begins | Initial configuration |
-| `post_setup` | After setup completes | Full setup context |
-| `step_complete` | After each setup step | Step-specific progress |
-| `validation_error` | When validation fails | Error details and recovery |
-| `setup_complete` | Final setup completion | Complete project context |
+Setup fires exactly one event: **`setup_complete`**, once, when setup finishes
+— in interactive and non-interactive runs alike. Triggers naming anything else
+still load (files written against the retired `pre_setup` / `post_setup` /
+`step_complete` / `validation_error` vocabulary are tolerated) but never fire.
+
+For runtime notifications — scans, pull requests, merges — use the
+`notifications` key in `buddy.config.ts`: an exported webhook env var alone
+does nothing at runtime.
 
 ### Programmatic Usage
 
 ```typescript
-import { Buddy, ConfigManager } from 'buddy-bot'
+import { Buddy, getConfig } from '@buddysh/buddy'
 
 // Load configuration
-const config = await ConfigManager.loadConfig()
+const config = await getConfig()
 
 // Create Buddy instance
 const buddy = new Buddy(config)
@@ -446,22 +520,24 @@ The dependency dashboard provides a centralized view of all your repository's de
 
 ## Rebase Functionality
 
-Buddy Bot includes powerful rebase functionality that allows you to update existing pull requests with the latest dependency versions, similar to Renovate's rebase feature.
+Buddy includes powerful rebase functionality that allows you to update existing pull requests with the latest dependency versions, similar to Renovate's rebase feature.
 
 ### How It Works
 
-All Buddy Bot pull requests include a rebase checkbox at the bottom:
+All Buddy pull requests include a rebase checkbox at the bottom:
 
 ```markdown
 ---
+
  - [ ] <!-- rebase-check -->If you want to update/retry this PR, check this box
+
 ---
 ```
 
 ### Using the Rebase Feature
 
-1. **Check the box**: In any Buddy Bot PR, check the rebase checkbox
-2. **Automatic detection**: The rebase workflow runs every minute to detect checked boxes
+1. **Check the box**: In any Buddy PR, check the rebase checkbox
+2. **Automatic detection**: Editing the PR body fires the workflow, which detects the checked box
 3. **Updates applied**: The PR is automatically updated with the latest dependency versions
 4. **Checkbox unchecked**: After successful rebase, the checkbox is automatically unchecked
 
@@ -471,21 +547,21 @@ You can also trigger rebase manually using the CLI:
 
 ```bash
 # Check for PRs with rebase checkbox enabled and update them
-buddy-bot update-check
+buddy update-check
 
 # Dry run to see what would be rebased
-buddy-bot update-check --dry-run
+buddy update-check --dry-run
 
 # With verbose output
-buddy-bot update-check --verbose
+buddy update-check --verbose
 ```
 
 ### Automated Rebase Workflow
 
-Buddy Bot includes a pre-built GitHub Actions workflow (`.github/workflows/buddy-check.yml`) that:
+Buddy includes a pre-built GitHub Actions workflow (`.github/workflows/buddy.yml`) that:
 
-- **🕐 Runs every minute**: Automatically checks for rebase requests
-- **🔍 Scans all PRs**: Finds Buddy Bot PRs with checked rebase boxes
+- **🕐 Event-driven**: Triggers on `pull_request: [edited]` and `issues: [edited]`, so ticking a checkbox runs it immediately — no polling
+- **🔍 Scans all PRs**: Finds Buddy PRs with checked rebase boxes
 - **📦 Updates dependencies**: Re-scans for latest versions and updates files
 - **📝 Updates PR content**: Refreshes PR title, body, and file changes
 - **✅ Maintains workflow files**: Updates GitHub Actions workflows (requires proper permissions)
@@ -495,11 +571,13 @@ Buddy Bot includes a pre-built GitHub Actions workflow (`.github/workflows/buddy
 For the rebase functionality to update GitHub Actions workflow files, you need proper permissions:
 
 #### Option 1: Personal Access Token (Recommended)
+
 1. Create a [Personal Access Token](https://github.com/settings/tokens) with `repo` and `workflow` scopes
-2. Add it as a repository secret named `BUDDY_BOT_TOKEN`
+2. Add it as a repository secret named `BUDDY_TOKEN`
 3. The workflow automatically uses it when available
 
 #### Option 2: Default GitHub Token (Limited)
+
 - Uses `GITHUB_TOKEN` with limited permissions
 - Cannot update workflow files (`.github/workflows/*.yml`)
 - Still updates package.json, lock files, and dependency files
@@ -509,6 +587,7 @@ For the rebase functionality to update GitHub Actions workflow files, you need p
 - ✅ **package.json** - npm/yarn/pnpm dependencies
 - ✅ **Lock files** - package-lock.json, yarn.lock, pnpm-lock.yaml, bun.lockb
 - ✅ **Dependency files** - deps.yaml, dependencies.yaml, pkgx.yaml
+- ✅ **Zig manifests** - build.zig.zon with URL and hash updates
 - ✅ **GitHub Actions** - workflow files (with proper permissions)
 - ✅ **PR content** - Updated title, body, and metadata
 
@@ -516,17 +595,17 @@ For the rebase functionality to update GitHub Actions workflow files, you need p
 
 ```bash
 # Create basic dashboard
-buddy-bot dashboard
+buddy dashboard
 
 # Create dashboard with custom title
-buddy-bot dashboard --title "My Dependencies"
+buddy dashboard --title "My Dependencies"
 ```
 
 ### Automated Dashboard Updates
 
-Buddy Bot includes a pre-built GitHub workflow (`.github/workflows/buddy-dashboard.yml`) that automatically updates your dependency dashboard:
+The unified workflow (`.github/workflows/buddy.yml`) automatically updates your dependency dashboard:
 
-- **📅 Scheduled**: Runs Monday, Wednesday, Friday at 9 AM UTC
+- **📅 Scheduled**: On the schedule your preset sets — often the same tick as the dependency update run
 - **🖱️ Manual**: Trigger from Actions tab with custom options
 - **📌 Auto-Pin**: Keeps dashboard pinned by default
 - **🔍 Dry-Run**: Preview mode available
@@ -540,8 +619,8 @@ The dashboard automatically organizes your dependencies and shows:
 
 The following updates have all been created. To force a retry/rebase of any, click on a checkbox below.
 
- - [ ] <!-- rebase-branch=buddy-bot/update-react-18 -->[chore(deps): update react to v18](../pull/123) (`react`)
- - [ ] <!-- rebase-branch=buddy-bot/update-types -->[chore(deps): update @types/node](../pull/124) (`@types/node`)
+- [&nbsp;] <!-- rebase-branch=buddy/update-react-18 -->[chore(deps): update react to v18](../pull/123) (`react`)
+- [&nbsp;] <!-- rebase-branch=buddy/update-types -->[chore(deps): update @types/node](../pull/124) (`@types/node`)
 
 ## Detected dependencies
 
@@ -573,40 +652,53 @@ The following updates have all been created. To force a retry/rebase of any, cli
 
 ## How It Works
 
-Buddy leverages Bun's built-in capabilities for maximum performance:
+Buddy's intelligent workflow delivers unmatched speed and accuracy:
 
-1. **Fast Scanning**: Uses `bun outdated` to quickly identify outdated packages
-2. **Smart Parsing**: Analyzes `package.json`, lock files, and dependency files across your project
-3. **Dependency File Support**: Automatically detects and updates pkgx and Launchpad dependency files
-4. **Intelligent Grouping**: Groups related packages to reduce PR noise
-5. **Rich Metadata**: Fetches package metadata, release notes, and changelogs
-6. **PR Generation**: Creates detailed pull requests with formatted content
+1. **⚡ Lightning-Fast Scanning**: Leverages `bun outdated` and parallel API calls for instant dependency analysis
+2. **🔍 Universal Detection**: Automatically discovers and parses all dependency files across your entire project
+3. **🧠 Smart Analysis**: Evaluates security implications, breaking changes, and compatibility before suggesting updates
+4. **🎯 Intelligent Grouping**: Automatically clusters related packages to create focused, logical pull requests
+5. **📊 Rich Context**: Fetches comprehensive metadata including adoption rates, confidence scores, and detailed changelogs
+6. **✨ Professional PRs**: Generates beautifully formatted pull requests with actionable insights and clear upgrade paths
 
 ### Supported Dependency Files
 
 Buddy automatically detects and updates the following dependency file formats:
 
 #### Package Dependencies
+
 - **package.json** - Traditional npm dependencies
 - **composer.json** - PHP dependencies from Packagist
 - **composer.lock** - PHP lock file with exact versions
-- **deps.yaml** / **deps.yml** - Launchpad/pkgx dependency declarations
-- **dependencies.yaml** / **dependencies.yml** - Alternative dependency file format
-- **pkgx.yaml** / **pkgx.yml** - pkgx-specific dependency files
-- **.deps.yaml** / **.deps.yml** - Hidden dependency configuration files
+- **build.zig.zon** - Zig package manager dependencies with URL and hash tracking
+- **deps.yaml**/**deps.yml** - Launchpad/pkgx dependency declarations
+- **dependencies.yaml**/**dependencies.yml** - Alternative dependency file format
+- **pkgx.yaml**/**pkgx.yml** - pkgx-specific dependency files
+- **.deps.yaml**/**.deps.yml** - Hidden dependency configuration files
 
 #### GitHub Actions
+
 - **.github/workflows/*.yml** - GitHub Actions workflow files
 - **.github/workflows/*.yaml** - Alternative YAML extension
 
-All dependency files are parsed using the `ts-pkgx` library to ensure compatibility with the pkgx registry ecosystem while maintaining support for tools like Launchpad that reuse the same registry format. GitHub Actions are detected by parsing `uses:` statements in workflow files and checking for updates via the GitHub releases API.
+#### Container Images
+
+Detected anywhere in the tree, in all three naming conventions:
+
+- `Dockerfile`, `Dockerfile.<suffix>` - e.g. `Dockerfile.prod`
+- `<prefix>.dockerfile` - e.g. `docker/api.dockerfile`, common in monorepos
+- `Containerfile`, `<prefix>.containerfile` - the OCI/Podman spelling
+
+All dependency files are parsed using the `ts-pantry` library to ensure compatibility with the pkgx registry ecosystem while maintaining support for tools like Launchpad that reuse the same registry format. GitHub Actions are detected by parsing `uses:` statements in workflow files and checking for updates via the GitHub releases API.
 
 ### Pull Request Format
 
-Buddy generates comprehensive pull requests with **three separate dependency tables**:
+Buddy generates comprehensive pull requests with **separate dependency tables** for each ecosystem:
 
 #### 1. npm Dependencies
+
 Full table with confidence badges, age, adoption metrics, and weekly download statistics:
+
 ```
 | Package | Change | Age | Adoption | Passing | Confidence |
 |---------|--------|-----|----------|---------|------------|
@@ -614,7 +706,9 @@ Full table with confidence badges, age, adoption metrics, and weekly download st
 ```
 
 #### 2. PHP/Composer Dependencies
+
 Focused table for PHP packages from Packagist:
+
 ```
 | Package | Change | File | Status |
 |---------|--------|------|--------|
@@ -622,16 +716,30 @@ Focused table for PHP packages from Packagist:
 | phpunit/phpunit | ^10.0.0 → ^10.3.0 | composer.json | ✅ Available |
 ```
 
-#### 3. Launchpad/pkgx Dependencies
+#### 3. Zig Dependencies
+
+Focused table for Zig packages with repository links and update types:
+
+```
+| Package | Change | Type | File |
+|---------|--------|------|------|
+| httpz | 0.5.0 → 0.6.0 | 🟡 minor | build.zig.zon |
+```
+
+#### 4. Launchpad/pkgx Dependencies
+
 Simplified table focusing on package updates and file locations:
+
 ```
 | Package | Change | File | Status |
 |---------|--------|------|--------|
 | bun.com | ^1.2.16 → ^1.2.19 | deps.yaml | ✅ Available |
 ```
 
-#### 4. GitHub Actions
+#### 5. GitHub Actions
+
 Workflow automation updates with direct links to repositories:
+
 ```
 | Action | Change | File | Status |
 |--------|--------|------|--------|
@@ -645,15 +753,15 @@ Each table is followed by detailed release notes, changelogs, and package statis
 
 - **`all`**: Update all dependencies regardless of semver impact
 - **`major`**: Only major version updates
-- **`minor`**: Major and minor updates (no patch-only)
-- **`patch`**: All updates (major, minor, and patch)
+- **`minor`**: Minor and patch updates (no majors)
+- **`patch`**: Only patch updates
 
 ## Auto-Merge Configuration
 
 Buddy supports configurable auto-merge for pull requests to reduce manual overhead:
 
 ```typescript
-const config: BuddyBotConfig = {
+const config: BuddyConfig = {
   pullRequest: {
     autoMerge: {
       enabled: true,
@@ -689,6 +797,7 @@ Each preset configures auto-merge appropriately:
 The **Development/Testing** preset is specifically designed for testing and development environments:
 
 ### Features
+
 - **⏰ Every 5 minutes**: Automated runs for rapid testing cycles
 - **🖱️ Manual triggers**: Full control via GitHub Actions UI
 - **🔍 Dry run by default**: Safe testing without making changes
@@ -697,18 +806,21 @@ The **Development/Testing** preset is specifically designed for testing and deve
 - **📊 Enhanced summaries**: Detailed test reports with context
 
 ### Manual Trigger Options
+
 When running manually, you can customize:
+
 - **Update strategy**: Choose patch, minor, major, or all updates
 - **Dry run mode**: Preview changes without applying them
 - **Specific packages**: Test updates for particular packages only
 - **Verbose logging**: Control output detail level
 
 ### Perfect For
+
 - 🧪 Testing new configurations
 - 🔧 Debugging dependency issues
 - 📈 Monitoring update frequency
 - 🚀 Validating workflow changes
-- 📋 Learning how Buddy Bot works
+- 📋 Learning how Buddy works
 
 ## Package Grouping
 
@@ -756,6 +868,7 @@ This PR contains the following updates:
 [Compare Source](https://github.com/microsoft/TypeScript/compare/v5.8.2...v5.8.3)
 
 ##### Bug Fixes
+
 - Fix issue with module resolution
 - Improve error messages
 
@@ -779,19 +892,26 @@ This PR contains the following updates:
 
 ---
 
-This PR was generated by [Buddy](https://github.com/stacksjs/buddy-bot).
+This PR was generated by [Buddy](https://github.com/stacksjs/buddy).
 ```
 
-## Comparison with Alternatives
+## Why Choose Buddy
 
 | Feature | Buddy | Dependabot | Renovate |
-|---------|-------|------------|----------|
-| **Speed** | ⚡ Bun-native | 🐌 Slower | 🐌 Slower |
-| **Package Managers** | Bun, npm, yarn, pnpm, Composer, pkgx, Launchpad | Limited | Limited |
-| **Configuration** | TypeScript, YAML, JSON/JS, package.json | YAML | JSON/JS |
-| **Grouping** | ✅ Flexible | ✅ Basic | ✅ Advanced |
-| **Zero Config** | ✅ Yes | ✅ Yes | ❌ Complex |
-| **Self-hosted** | ✅ Yes | ❌ GitHub only | ✅ Yes |
+|---------|-----------|------------|----------|
+| **Performance** | ⚡ Lightning fast (Bun-native) | 🐌 | 🐌 |
+| **Package Ecosystem** | 🌟 Universal (8+ managers) | 📦 Limited scope | 📦 Limited scope |
+| **Setup Experience** | 🎯 Interactive + Zero config | ✅ Simple | ❌ Complex configuration |
+| **Docker Support** | ✅ Full Dockerfile updates | ❌ No support | ✅ Basic support |
+| **Configuration** | 🔧 TypeScript + multiple formats | 📝 YAML only | 📝 JSON/JS only |
+| **Package Grouping** | 🎨 Intelligent + flexible | 📋 Basic grouping | 🔧 Advanced but complex |
+| **Dashboard** | 📊 Rich interactive dashboard | ❌ No dashboard | 📊 Basic dashboard |
+| **Migration Tools** | 🔄 Automated import | ❌ Manual migration | ❌ Manual migration |
+| **Vulnerability Alerts** | ✅ OSV.dev, prioritized PRs + dashboard | ✅ GitHub Advisory | ✅ OSV / GitHub Advisory |
+| **Private Registries** | ✅ Config or `.npmrc`, per-scope | ✅ Supported | ✅ Supported |
+| **GitHub Enterprise** | ✅ Zero-config on GHES runners | ✅ Supported | ✅ Supported |
+| **Self-hosting** | ✅ Full control | ❌ GitHub-only | ✅ Complex setup |
+| **Plugin System** | 🔌 Extensible ecosystem | ❌ Limited | 🔌 Advanced but complex |
 
 ## CI/CD Integration
 
@@ -804,7 +924,9 @@ Buddy includes powerful GitHub Actions workflow templates for different automati
 name: Buddy Update
 on:
   schedule:
-    - cron: '0 */2 * * *' # Every 2 hours
+
+    - cron: '0 _/2 _ _ _' # Every 2 hours
+
   workflow_dispatch:
     inputs:
       strategy:
@@ -820,14 +942,18 @@ jobs:
   dependency-update:
     runs-on: ubuntu-latest
     steps:
+
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install
-      - run: bunx buddy-bot scan --strategy ${{ github.event.inputs.strategy || 'patch' }} --verbose
+      - run: bunx @buddysh/buddy scan --strategy ${{ github.event.inputs.strategy || 'patch' }} --verbose
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - if: ${{ github.event.inputs.dry_run != 'true' }}
-        run: bunx buddy-bot update --strategy ${{ github.event.inputs.strategy || 'patch' }} --verbose
+
+        run: bunx @buddysh/buddy update --strategy ${{ github.event.inputs.strategy || 'patch' }} --verbose
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -838,7 +964,7 @@ jobs:
 # Generate comprehensive GitHub Actions workflows
 buddy generate-workflows
 
-# This creates:
+# This creates
 # - buddy-comprehensive.yml (multi-strategy scheduling)
 # - dependency-updates-daily.yml (patch updates)
 # - dependency-updates-weekly.yml (minor updates)
@@ -850,40 +976,47 @@ buddy generate-workflows
 **🔥 Comprehensive Multi-Strategy Workflow:**
 
 The updated workflow system automatically:
-- **Every 2 hours**: All configured strategies with dry-run by default
+
+- **On your preset's schedule**: All configured strategies with dry-run by default
 - **Manual trigger**: Any strategy with configurable dry-run option
 - **Enhanced testing**: Comprehensive validation and summaries
 - **Failure handling**: Auto-creates GitHub issues
 - **Smart summaries**: Rich GitHub Actions summaries
-- **Flexible scheduling**: Consistent 2-hour intervals for all presets
+- **Flexible scheduling**: Each preset sets its own update and dashboard cadence
 
 ### GitHub Actions Permissions Setup
 
 ⚠️ **Important**: For Buddy to create pull requests in GitHub Actions workflows, you need to enable the proper permissions:
 
 #### Repository Settings
-1. Go to your repository **Settings** → **Actions** → **General**
-2. Under **"Workflow permissions"**, select **"Read and write permissions"**
+
+1. Go to your repository **Settings**→**Actions**→**General**
+2. Under **"Workflow permissions"**, select**"Read and write permissions"**
 3. ✅ Check **"Allow GitHub Actions to create and approve pull requests"**
 4. Click **"Save"**
 
 #### Organization Settings (if applicable)
+
 If your repository is part of an organization, you may also need to enable organization-level permissions:
-1. Go to your organization **Settings** → **Actions** → **General**
+
+1. Go to your organization **Settings**→**Actions**→**General**
 2. Configure the same permissions as above
 
 #### Quick Setup Command
+
 ```bash
 # Open GitHub settings pages directly
 buddy open-settings
 
-# Or manually visit:
+# Or manually visit
 # Repository: https://github.com/YOUR_ORG/YOUR_REPO/settings/actions
 # Organization: https://github.com/organizations/YOUR_ORG/settings/actions
 ```
 
 #### Troubleshooting
+
 If you see errors like:
+
 - `GitHub Actions is not permitted to create or approve pull requests`
 - `GraphQL: GitHub Actions is not permitted to create or approve pull requests (createPullRequest)`
 
@@ -900,12 +1033,18 @@ bun test
 ## Build From Source
 
 ```bash
+bun install     # not optional — see the note below
 bun run build
 ```
 
+> [!NOTE]
+> `bun install` is a hard prerequisite for every dev command. On a fresh clone without `node_modules`, `bun test` fails with over a hundred phantom errors (`Cannot find package 'ts-pantry'` and friends) that look like real bugs and are not.
+>
+> Git hooks (staged lint on `pre-commit`, gitlint on `commit-msg`) are declared in `package.json` but are not installed automatically — run `bunx bun-git-hooks` once after cloning to activate them.
+
 ## Changelog
 
-Please see our [releases](https://github.com/stacksjs/stacks/releases) page for more information on what has changed recently.
+Please see our [releases](https://github.com/stacksjs/buddy/releases) page for more information on what has changed recently.
 
 ## Contributing
 
@@ -915,11 +1054,11 @@ Please see the [Contributing Guide](https://github.com/stacksjs/contributing) fo
 
 For help, discussion about best practices, or any other conversation that would benefit from being searchable:
 
-[Discussions on GitHub](https://github.com/stacksjs/stacks/discussions)
+[Discussions on GitHub](https://github.com/stacksjs/buddy/discussions)
 
 For casual chit-chat with others using this package:
 
-[Join the Stacks Discord Server](https://discord.gg/stacksjs)
+[Join the Stacks Discord Server](https://stacksjs.com/discord)
 
 ## Postcardware
 
@@ -950,8 +1089,8 @@ The MIT License (MIT). Please see [LICENSE](LICENSE.md) for more information.
 Made with 💙
 
 <!-- Badges -->
-[npm-version-src]: https://img.shields.io/npm/v/buddy-bot?style=flat-square
-[npm-version-href]: https://npmjs.com/package/buddy-bot
+[npm-version-src]: https://img.shields.io/npm/v/%40buddysh%2Fbuddy?style=flat-square
+[npm-version-href]: https://npmjs.com/package/%40buddysh%2Fbuddy
 [github-actions-src]: https://img.shields.io/github/actions/workflow/status/stacksjs/buddy/ci.yml?style=flat-square&branch=main
 [github-actions-href]: https://github.com/stacksjs/buddy/actions?query=workflow%3Aci
 

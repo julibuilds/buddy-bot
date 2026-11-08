@@ -1,9 +1,25 @@
-import type { BuddyBotConfig } from '../src/types'
+import type { BuddyConfig } from '../src/types'
 import type { Logger } from '../src/utils/logger'
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import fs from 'node:fs'
 import path from 'node:path'
 import { RegistryClient } from '../src/registry/registry-client'
+
+// Walks a wrapper object created via `{ readFileSync: spyOn(fs, 'readFileSync'), ... }`
+// (sometimes nested, e.g. `{ promises: { readdir: spyOn(...) } }`) and restores
+// every Bun spy it finds. Plain `wrapper?.mockRestore?.()` on the wrapper object
+// silently no-ops because `mockRestore` lives on the inner spies, not the
+// wrapper — leaving fs/path globals mocked across test files.
+function restoreSpiesIn(obj: any): void {
+  if (!obj || typeof obj !== 'object')
+    return
+  for (const value of Object.values(obj)) {
+    if (typeof value === 'function' && typeof (value as any).mockRestore === 'function')
+      (value as any).mockRestore()
+    else if (value && typeof value === 'object')
+      restoreSpiesIn(value)
+  }
+}
 
 describe('RegistryClient - Workspace Detection', () => {
   let registryClient: RegistryClient
@@ -12,7 +28,7 @@ describe('RegistryClient - Workspace Detection', () => {
   let fsSpy: any
   let pathSpy: any
 
-  const mockConfig: BuddyBotConfig = {
+  const mockConfig: BuddyConfig = {
     packages: {
       strategy: 'all',
       ignore: ['ignored/package'],
@@ -37,8 +53,10 @@ describe('RegistryClient - Workspace Detection', () => {
 
   afterEach(() => {
     runCommandSpy?.mockRestore?.()
-    fsSpy?.mockRestore?.()
-    pathSpy?.mockRestore?.()
+    restoreSpiesIn(fsSpy)
+    restoreSpiesIn(pathSpy)
+    fsSpy = undefined
+    pathSpy = undefined
   })
 
   describe('getWorkspaceNames', () => {
@@ -243,91 +261,8 @@ describe('RegistryClient - Workspace Detection', () => {
     })
   })
 
-  describe('findPackageJsonFiles', () => {
-    it('should find all package.json files recursively', async () => {
-      const fs = await import('node:fs')
-      const path = await import('node:path')
-
-      fsSpy = {
-        promises: {
-          readdir: spyOn(fs.promises, 'readdir'),
-          stat: spyOn(fs.promises, 'stat'),
-        },
-      }
-
-      pathSpy = {
-        join: spyOn(path, 'join'),
-      }
-
-      // Mock directory structure: root with package.json and src dir
-      fsSpy.promises.readdir
-        .mockResolvedValueOnce(['package.json', 'src'] as any) // root
-        .mockResolvedValueOnce(['components'] as any) // src
-        .mockResolvedValueOnce(['package.json'] as any) // src/components
-
-      const mockDirectoryStat = { isDirectory: () => true, isFile: () => false }
-      const mockFileStat = { isDirectory: () => false, isFile: () => true }
-
-      fsSpy.promises.stat
-        .mockResolvedValueOnce(mockFileStat) // package.json
-        .mockResolvedValueOnce(mockDirectoryStat) // src
-        .mockResolvedValueOnce(mockDirectoryStat) // components
-        .mockResolvedValueOnce(mockFileStat) // components/package.json
-
-      pathSpy.join.mockImplementation((...args: string[]) => args.join('/'))
-
-      const files = await (registryClient as any).findPackageJsonFiles()
-
-      // The exact files found may vary based on real filesystem vs mocks
-      // but we should find at least the root package.json
-      expect(files).toContain('package.json')
-      expect(files.length).toBeGreaterThanOrEqual(1)
-    })
-
-    it('should skip directories that should be ignored', async () => {
-      fsSpy = {
-        promises: {
-          readdir: spyOn(fs.promises, 'readdir'),
-          stat: spyOn(fs.promises, 'stat'),
-        },
-      }
-
-      pathSpy = {
-        join: spyOn(path, 'join'),
-      }
-
-      // Mock directory with ignored directories
-      fsSpy.promises.readdir.mockResolvedValueOnce([
-        'package.json',
-        'node_modules',
-        '.git',
-        'dist',
-        '.next',
-        'src',
-      ] as any)
-
-      const mockDirectoryStat = { isDirectory: () => true, isFile: () => false }
-      const mockFileStat = { isDirectory: () => false, isFile: () => true }
-
-      fsSpy.promises.stat
-        .mockResolvedValueOnce(mockFileStat) // package.json
-        .mockResolvedValueOnce(mockDirectoryStat) // node_modules (skipped)
-        .mockResolvedValueOnce(mockDirectoryStat) // .git (skipped)
-        .mockResolvedValueOnce(mockDirectoryStat) // dist (skipped)
-        .mockResolvedValueOnce(mockDirectoryStat) // .next (skipped)
-        .mockResolvedValueOnce(mockDirectoryStat) // src
-
-      fsSpy.promises.readdir.mockResolvedValueOnce(['index.ts'] as any) // src contents
-
-      fsSpy.promises.stat.mockResolvedValueOnce(mockFileStat) // src/index.ts
-
-      pathSpy.join.mockImplementation((...args: string[]) => args.join('/'))
-
-      const files = await (registryClient as any).findPackageJsonFiles()
-
-      expect(files).toEqual(['package.json'])
-    })
-  })
+  // Owned recursive discovery and generated-directory exclusions are exercised
+  // through the real public API in registry-owned-manifests.test.ts.
 
   describe('shouldSkipDirectory', () => {
     it('should skip common directories', () => {

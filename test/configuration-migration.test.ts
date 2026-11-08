@@ -20,7 +20,7 @@ describe('Configuration Migration & Import System', () => {
   })
 
   afterEach(() => {
-    // Change back to original directory and clean up
+    // Always restore cwd first, before any cleanup
     try {
       process.chdir(originalCwd)
     }
@@ -42,7 +42,7 @@ describe('Configuration Migration & Import System', () => {
   describe('Tool Detection', () => {
     it('should detect Renovate configuration files', async () => {
       // Create test renovate.json
-      fs.writeFileSync('renovate.json', JSON.stringify({
+      fs.writeFileSync(join(testDir, 'renovate.json'), JSON.stringify({
         schedule: ['before 6am'],
         automerge: true,
       }))
@@ -57,8 +57,8 @@ describe('Configuration Migration & Import System', () => {
 
     it('should detect Dependabot configuration files', async () => {
       // Create test dependabot.yml
-      fs.mkdirSync('.github', { recursive: true })
-      fs.writeFileSync('.github/dependabot.yml', `
+      fs.mkdirSync(join(testDir, '.github'), { recursive: true })
+      fs.writeFileSync(join(testDir, '.github/dependabot.yml'), `
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -77,7 +77,7 @@ updates:
 
     it('should detect renovate config in package.json', async () => {
       // Create test package.json with renovate config
-      fs.writeFileSync('test-package.json', JSON.stringify({
+      fs.writeFileSync(join(testDir, 'test-package.json'), JSON.stringify({
         name: 'test-package',
         renovate: {
           schedule: ['every weekend'],
@@ -99,7 +99,7 @@ updates:
       readSpy.mockImplementation((...args: any[]): any => {
         const [path, encoding] = args
         if (path === 'package.json') {
-          return fs.readFileSync('test-package.json', encoding)
+          return originalReadFileSync(join(testDir, 'test-package.json'), encoding)
         }
         return originalReadFileSync(path, encoding)
       })
@@ -117,9 +117,9 @@ updates:
 
     it('should detect multiple configuration tools', async () => {
       // Create both renovate and dependabot configs
-      fs.writeFileSync('renovate.json', JSON.stringify({ schedule: ['before 6am'] }))
-      fs.mkdirSync('.github', { recursive: true })
-      fs.writeFileSync('.github/dependabot.yml', 'version: 2\nupdates: []')
+      fs.writeFileSync(join(testDir, 'renovate.json'), JSON.stringify({ schedule: ['before 6am'] }))
+      fs.mkdirSync(join(testDir, '.github'), { recursive: true })
+      fs.writeFileSync(join(testDir, '.github/dependabot.yml'), 'version: 2\nupdates: []')
 
       const tools = await migrator.detectExistingTools()
 
@@ -147,7 +147,7 @@ updates:
         reviewers: ['senior-dev'],
       }
 
-      fs.writeFileSync('renovate.json', JSON.stringify(renovateConfig))
+      fs.writeFileSync(join(testDir, 'renovate.json'), JSON.stringify(renovateConfig))
 
       const result = await migrator.migrateFromRenovate('renovate.json')
 
@@ -179,17 +179,24 @@ updates:
         ],
       }
 
-      fs.writeFileSync('renovate.json', JSON.stringify(renovateConfig))
+      fs.writeFileSync(join(testDir, 'renovate.json'), JSON.stringify(renovateConfig))
 
       const result = await migrator.migrateFromRenovate('renovate.json')
 
       expect(result.migratedSettings.packages).toBeDefined()
-      expect(result.migratedSettings.packages.groups).toHaveLength(1)
-      expect(result.migratedSettings.packages.groups[0]).toEqual({
-        name: 'React ecosystem',
-        patterns: ['react*', '@types/react*'],
-        strategy: 'minor',
+
+      // Rules migrate as rules. The old path flattened them into legacy
+      // groups, which cannot express `matchUpdateTypes` — so a rule scoped to
+      // minor and patch silently became one that also matched majors.
+      expect(result.migratedSettings.packages.rules).toHaveLength(1)
+      expect(result.migratedSettings.packages.rules[0]).toEqual({
+        matchPackages: ['react*', '@types/react*'],
+        matchUpdateTypes: ['minor', 'patch'],
+        groupName: 'React ecosystem',
       })
+
+      // `enabled: false` on a name-only rule is how Renovate spells "ignore",
+      // and it reads better in buddy's own ignore list.
       expect(result.migratedSettings.packages.ignore).toEqual(['typescript', '@types/node'])
     })
 
@@ -204,7 +211,7 @@ updates:
         ],
       }
 
-      fs.writeFileSync('renovate.json', JSON.stringify(renovateConfig))
+      fs.writeFileSync(join(testDir, 'renovate.json'), JSON.stringify(renovateConfig))
 
       const result = await migrator.migrateFromRenovate('renovate.json')
 
@@ -224,7 +231,7 @@ updates:
         },
       }
 
-      fs.writeFileSync('test-package.json', JSON.stringify(packageJson))
+      fs.writeFileSync(join(testDir, 'test-package.json'), JSON.stringify(packageJson))
 
       // Mock fs to redirect package.json reads to our test file
       const originalReadFileSync = fs.readFileSync
@@ -232,7 +239,7 @@ updates:
       readSpy.mockImplementation((...args: any[]): any => {
         const [path, encoding] = args
         if (path === 'package.json') {
-          return fs.readFileSync('test-package.json', encoding)
+          return originalReadFileSync(join(testDir, 'test-package.json'), encoding)
         }
         return originalReadFileSync(path, encoding)
       })
@@ -252,7 +259,7 @@ updates:
     })
 
     it('should handle parsing errors gracefully', async () => {
-      fs.writeFileSync('renovate.json', 'invalid json{')
+      fs.writeFileSync(join(testDir, 'renovate.json'), 'invalid json{')
 
       const result = await migrator.migrateFromRenovate('renovate.json')
 
@@ -276,8 +283,8 @@ updates:
       - dependency-name: "typescript"
 `
 
-      fs.mkdirSync('.github', { recursive: true })
-      fs.writeFileSync('.github/dependabot.yml', dependabotYml)
+      fs.mkdirSync(join(testDir, '.github'), { recursive: true })
+      fs.writeFileSync(join(testDir, '.github/dependabot.yml'), dependabotYml)
 
       const result = await migrator.migrateFromDependabot('.github/dependabot.yml')
 
@@ -298,8 +305,8 @@ updates:
       interval: "daily"
 `
 
-      fs.mkdirSync('.github', { recursive: true })
-      fs.writeFileSync('.github/dependabot.yml', dailyConfig)
+      fs.mkdirSync(join(testDir, '.github'), { recursive: true })
+      fs.writeFileSync(join(testDir, '.github/dependabot.yml'), dailyConfig)
 
       const result = await migrator.migrateFromDependabot('.github/dependabot.yml')
 
@@ -307,14 +314,14 @@ updates:
     })
 
     it('should handle parsing errors gracefully', async () => {
-      fs.mkdirSync('.github', { recursive: true })
-      fs.writeFileSync('.github/dependabot.yml', 'invalid: yaml: content: [')
+      fs.mkdirSync(join(testDir, '.github'), { recursive: true })
+      fs.writeFileSync(join(testDir, '.github/dependabot.yml'), 'invalid: yaml: content: [')
 
       const result = await migrator.migrateFromDependabot('.github/dependabot.yml')
 
       expect(result.configFound).toBe(true) // File exists but content may fail
       expect(result.warnings).toHaveLength(1)
-      expect(result.warnings[0]).toBe('Dependabot configuration is limited. Consider customizing Buddy Bot settings.')
+      expect(result.warnings[0]).toBe('Dependabot configuration is limited. Consider customizing Buddy settings.')
     })
   })
 

@@ -1,0 +1,300 @@
+import type { AiClient } from '../ai/types'
+import type { Logger } from '../utils/logger'
+import type { ClassifiedFailure, FailureKind } from './classify'
+import { runAgent } from '../agent/runner'
+import { fixCiMode } from '../agent/modes'
+import { getDefaultLogger } from '../utils/logger'
+import { classifyFailure, describeFailure } from './classify'
+
+/** What a fix attempt concluded. */
+export interface FixOutcome {
+  /** How the failure was classified */
+  failure: ClassifiedFailure
+  /** What action was taken */
+  action: 'mechanical-fix' | 'retry' | 'agent-fix' | 'reported' | 'skipped'
+  /** Whether the failure looks resolved */
+  fixed: boolean
+  /** Comment body explaining the outcome, ready to post */
+  report: string
+}
+
+/** Inputs to a fix attempt. */
+export interface FixOptions {
+  /** Captured log from the failing job */
+  log: string
+  /** Whether the same failure occurs on the base branch */
+  failsOnBase?: boolean
+  /**
+   * Resolve whether the base branch fails the same way.
+   *
+   * A hook rather than a value because the answer needs the classification,
+   * which is computed here — and because it costs API calls that are only
+   * worth spending once there is a failure to compare against.
+   */
+  checkBase?: (kind: FailureKind) => Promise<boolean>
+  /** Repository workspace */
+  workspace: string
+  /** Branch under repair */
+  branch?: string
+  baseBranch: string
+  /** How many attempts have already been made on this pull request */
+  priorAttempts?: number
+  /** Maximum attempts before giving up */
+  maxAttempts?: number
+  /** Client for agent-driven repair; absent means analysis only */
+  ai?: AiClient | null
+  /**
+   * Run the mechanical repair for a stale lock file.
+   *
+   * Returns what actually happened, because regenerating a file and landing it
+   * on the branch are different outcomes and the report distinguishes them.
+   */
+  regenerateLockfile?: () => Promise<LockfileRepair>
+  /**
+   * Re-run the failing jobs.
+   *
+   * Only reached for a transient failure. A re-run happens against the
+   * original commit, so it can clear a flake and can do nothing at all for a
+   * commit that has since been repaired.
+   */
+  rerun?: () => Promise<boolean>
+  /** Diagnose and report without changing anything */
+  dryRun?: boolean
+  /**
+   * Diagnose without repairing, because the caller has nowhere to repair.
+   *
+   * Distinct from `dryRun`, which is a choice someone made. This is a
+   * constraint: answering an `@buddy fix-ci` comment runs on the default
+   * branch, so rewriting a lock file or letting the agent edit files would
+   * change the wrong tree entirely. Re-running a flake is still fine — that is
+   * an API call, not a change to a checkout.
+   */
+  analysisOnly?: boolean
+  logger?: Logger
+}
+
+/**
+ * Diagnose a failing CI run and repair it when the fix is clear.
+ *
+ * Ordered cheapest-first: a failure that also happens on the base branch is
+ * not this change's to fix, a known-mechanical failure is fixed without a
+ * model, and only what remains reaches the agent. This is also why fix-ci is
+ * useful with no AI configured at all.
+ *
+ * @param options - Log, repository context and repair hooks
+ * @returns What was done and a report ready to post
+ * @example
+ * ```ts
+ * const outcome = await attemptFix({ log, workspace, baseBranch: 'main' })
+ * await provider.createComment(pr, outcome.report)
+ * ```
+ */
+/** What the mechanical lock-file repair managed to do. */
+export interface LockfileRepair {
+  /** The lock file was rewritten in the workspace */
+  regenerated: boolean
+  /** The rewritten file was committed and pushed to the branch */
+  pushed: boolean
+}
+
+/**
+ * Describe a lock-file repair without overstating it.
+ *
+ * This message claimed "and pushed the result" long before anything pushed
+ * anything, which is the worst kind of report: confident, specific and wrong.
+ *
+ * @param regenerated - Whether the file was rewritten
+ * @param pushed - Whether the rewrite reached the branch
+ */
+function lockfileReport(regenerated: boolean, pushed: boolean): string {
+  if (!regenerated)
+    return 'Tried to regenerate the lock file, but the install did not succeed.'
+
+  if (!pushed) {
+    return 'Regenerated the lock file, but could not push it to the branch. '
+      + 'The change is in the workspace only, so the run will still be red until someone commits it.'
+  }
+
+  return 'Regenerated the lock file and pushed the result. No model was needed.'
+}
+
+/**
+ * Explain a diagnosis that could not be acted on from where it was made.
+ *
+ * Says which repair was available rather than only that none happened — a
+ * report that stops at "I cannot fix this here" reads as a limitation, where
+ * the useful version names the fix and who will apply it.
+ *
+ * @param failure - The classified failure
+ */
+function analysisOnlyNote(failure: ClassifiedFailure): string {
+  const shared = 'Repairs run on the pull request\'s branch, and answering a comment runs on the default branch, '
+    + 'so anything I changed here would land on the wrong tree. '
+
+  if (failure.kind === 'lockfile-drift') {
+    return `Regenerating the lock file would fix this, and no model would be needed. ${shared}`
+      + 'The `fix-ci` job will do it on the next failing run, or you can run '
+      + '`buddy fix-ci --run-id <id> --pr <number>` yourself.'
+  }
+
+  return `${shared}The \`fix-ci\` job runs on the failing run itself and can repair this; `
+    + 'this reply is the diagnosis it would start from.'
+}
+
+export async function attemptFix(options: FixOptions): Promise<FixOutcome> {
+  const logger = options.logger ?? getDefaultLogger()
+  const failure = classifyFailure(options.log)
+  const maxAttempts = options.maxAttempts ?? 3
+
+  logger.info(`🩺 CI failure classified as ${failure.kind}`)
+
+  // A failure that reproduces on the base branch is pre-existing. Patching
+  // around it here would attribute someone else's breakage to this change.
+  // An explicit answer wins over the hook, so a caller that already knows
+  // does not pay for the lookup.
+  const failsOnBase = options.failsOnBase ?? (options.checkBase ? await options.checkBase(failure.kind) : false)
+
+  if (failsOnBase) {
+    return {
+      failure,
+      action: 'skipped',
+      fixed: false,
+      report: report(failure, 'This failure also occurs on the base branch, so it is not caused by this change. '
+        + 'Fixing it here would only mask it.'),
+    }
+  }
+
+  if ((options.priorAttempts ?? 0) >= maxAttempts) {
+    return {
+      failure,
+      action: 'skipped',
+      fixed: false,
+      report: report(failure, `Already attempted ${options.priorAttempts} time(s); stopping rather than looping.`),
+    }
+  }
+
+  // Everything below either writes to the workspace or hands it to the agent.
+  // A flake is the exception, and it is handled on its own further down.
+  if (options.analysisOnly && failure.kind !== 'flake') {
+    return {
+      failure,
+      action: 'reported',
+      fixed: false,
+      report: report(failure, analysisOnlyNote(failure)),
+    }
+  }
+
+  if (failure.kind === 'lockfile-drift' && options.regenerateLockfile) {
+    if (options.dryRun) {
+      return {
+        failure,
+        action: 'mechanical-fix',
+        fixed: false,
+        report: report(failure, 'Regenerating the lock file would fix this. No model would be needed. '
+          + 'Nothing was changed, because this was a dry run.'),
+      }
+    }
+
+    logger.info('🔧 Regenerating the lock file')
+    const { regenerated, pushed } = await options.regenerateLockfile()
+
+    return {
+      failure,
+      action: 'mechanical-fix',
+      // Only a pushed fix has actually repaired the run. A regenerated file
+      // sitting in a workspace that is about to be discarded has not.
+      fixed: pushed,
+      report: report(failure, lockfileReport(regenerated, pushed)),
+    }
+  }
+
+  if (failure.kind === 'flake') {
+    if (options.dryRun) {
+      return {
+        failure,
+        action: 'retry',
+        fixed: false,
+        report: report(failure, 'This looks transient, and re-running the failed jobs would likely clear it. '
+          + 'Nothing was changed, because this was a dry run.'),
+      }
+    }
+
+    // Without a re-run hook the diagnosis is all there is to offer, which is
+    // what this branch did for every provider until one could be given.
+    if (!options.rerun) {
+      return {
+        failure,
+        action: 'retry',
+        fixed: false,
+        report: report(failure, 'This looks transient. Re-running the failed job is likely to clear it.'),
+      }
+    }
+
+    logger.info('🔁 Re-running the failed jobs')
+    const rerun = await options.rerun()
+
+    return {
+      failure,
+      action: 'retry',
+      // A re-run is not a repair. The jobs have been asked to run again and
+      // may still fail; reporting that as fixed would be a guess dressed up
+      // as a result.
+      fixed: false,
+      report: report(failure, rerun
+        ? 'This looks transient, so I re-ran the failed jobs. No model was needed.'
+        : 'This looks transient, but I could not re-run the failed jobs — `actions: write` is the usual reason. '
+        + 'Re-running them from the Actions tab is likely to clear it.'),
+    }
+  }
+
+  if (!options.ai) {
+    return {
+      failure,
+      action: 'reported',
+      fixed: false,
+      report: report(failure, 'No AI provider is configured, so this needs a human. '
+        + 'See https://buddy.sh/ai/providers to enable automatic repair.'),
+    }
+  }
+
+  const result = await runAgent(options.ai, {
+    mode: fixCiMode,
+    task: [
+      'A CI job on this branch is failing. Diagnose the root cause and fix it if the fix is clear.',
+      '',
+      `Classification: ${failure.kind} — ${describeFailure(failure)}`,
+      '',
+      'Relevant log lines:',
+      failure.evidence.join('\n'),
+      '',
+      'Verify your fix by running the project\'s tests or build before reporting it done.',
+      'If the fix is not clear, explain what you found rather than guessing.',
+    ].join('\n'),
+    context: {
+      workspace: options.workspace,
+      baseBranch: options.baseBranch,
+      ...(options.branch ? { branch: options.branch } : {}),
+    },
+    logger,
+  })
+
+  return {
+    failure,
+    action: 'agent-fix',
+    fixed: result.stopReason === 'completed',
+    report: report(failure, result.output || 'The repair run ended without a conclusion.'),
+  }
+}
+
+/** Render a failure and its outcome as a comment body. */
+function report(failure: ClassifiedFailure, conclusion: string): string {
+  let body = `## 🩺 CI failure analysis\n\n**Diagnosis:** ${describeFailure(failure)}\n\n${conclusion}\n`
+
+  if (failure.evidence.length > 0) {
+    body += `\n<details><summary>Relevant log lines</summary>\n\n\`\`\`\n${
+      failure.evidence.slice(0, 20).join('\n')
+    }\n\`\`\`\n\n</details>\n`
+  }
+
+  return body
+}

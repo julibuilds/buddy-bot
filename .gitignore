@@ -17,3 +17,9 @@ qjs*
 bin/buddy
 bin/buddy-*
 vendor
+test-package.json
+/pantry
+.zed
+.cursor
+.claude
+pantry

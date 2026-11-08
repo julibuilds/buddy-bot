@@ -1,6 +1,6 @@
-/* eslint-disable no-console */
 import type { Dependency, PackageFile, PackageUpdate } from '../types'
-import { resolveDependencyFile } from 'ts-pkgx'
+import { resolveDependencyFile } from 'ts-pantry'
+import { getDefaultLogger } from './logger'
 
 /**
  * Check if a file path is a dependency file that we can handle
@@ -20,7 +20,7 @@ export function isDependencyFile(filePath: string): boolean {
 }
 
 /**
- * Parse a dependency file using ts-pkgx (supports pkgx registry format)
+ * Parse a dependency file using ts-pantry (supports pkgx registry format)
  */
 export async function parseDependencyFile(filePath: string, content: string): Promise<PackageFile | null> {
   try {
@@ -31,19 +31,19 @@ export async function parseDependencyFile(filePath: string, content: string): Pr
     let dependencies: Dependency[] = []
 
     try {
-      // Use ts-pkgx to resolve the dependency file
+      // Use ts-pantry to resolve the dependency file
       const resolvedDeps = await resolveDependencyFile(filePath)
 
       if (resolvedDeps && typeof resolvedDeps === 'object') {
         // Parse dependencies from the resolved structure
-        // ts-pkgx returns allDependencies array instead of separate sections
+        // ts-pantry returns allDependencies array instead of separate sections
         if (resolvedDeps.allDependencies && Array.isArray(resolvedDeps.allDependencies)) {
           for (const dep of resolvedDeps.allDependencies) {
             if (dep.name && dep.constraint) {
               dependencies.push({
                 name: dep.name,
                 currentVersion: dep.constraint,
-                type: 'dependencies', // ts-pkgx doesn't distinguish between dep types for this registry
+                type: 'dependencies', // ts-pantry doesn't distinguish between dep types for this registry
                 file: filePath,
               })
             }
@@ -52,15 +52,17 @@ export async function parseDependencyFile(filePath: string, content: string): Pr
       }
     }
     catch (pkgxError) {
-      console.warn(`ts-pkgx failed to parse ${filePath}, attempting fallback YAML parsing:`, pkgxError)
+      getDefaultLogger().warn(`ts-pantry failed to parse ${filePath}, attempting fallback YAML parsing:`, pkgxError)
+    }
 
-      // Fallback: Simple YAML parsing for basic deps.yaml files
+    // Fallback: if ts-pantry returned no dependencies (either threw or returned empty),
+    // try the simple YAML parser which works without the pantry registry
+    if (dependencies.length === 0) {
       try {
         dependencies = await parseSimpleYamlDependencies(content, filePath)
       }
       catch (yamlError) {
-        console.warn(`Fallback YAML parsing also failed for ${filePath}:`, yamlError)
-        // Return empty dependencies rather than null to maintain file structure
+        getDefaultLogger().warn(`Fallback YAML parsing failed for ${filePath}:`, yamlError)
         dependencies = []
       }
     }
@@ -74,14 +76,14 @@ export async function parseDependencyFile(filePath: string, content: string): Pr
     }
   }
   catch (error) {
-    console.warn(`Failed to parse dependency file ${filePath}:`, error)
+    getDefaultLogger().warn(`Failed to parse dependency file ${filePath}:`, error)
     return null
   }
 }
 
 /**
  * Simple YAML parser for basic dependencies structure
- * Fallback when ts-pkgx fails
+ * Fallback when ts-pantry fails
  */
 async function parseSimpleYamlDependencies(content: string, filePath: string): Promise<Dependency[]> {
   const dependencies: Dependency[] = []
@@ -124,19 +126,35 @@ async function parseSimpleYamlDependencies(content: string, filePath: string): P
 }
 
 /**
+ * Does this content parse as YAML?
+ *
+ * Used as a guard around rewrites rather than as a parser: the result is only
+ * ever compared before and after, so a file that never parsed is not penalised.
+ */
+function parsesAsYaml(content: string): boolean {
+  try {
+    Bun.YAML.parse(content)
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+/**
  * Update dependency file content with new package versions
  */
 export async function updateDependencyFile(filePath: string, content: string, updates: PackageUpdate[]): Promise<string> {
   try {
     if (!isDependencyFile(filePath)) {
-      console.log(`⚠️ updateDependencyFile: ${filePath} is not a dependency file, returning original content`)
+      getDefaultLogger().info(`⚠️ updateDependencyFile: ${filePath} is not a dependency file, returning original content`)
       return content
     }
 
     // Extra safety check: ensure we're not accidentally processing non-YAML content
     if (content.trim().startsWith('{') && content.includes('"require"')) {
-      console.log(`⚠️ updateDependencyFile: Content appears to be JSON (composer.json), but file is ${filePath}`)
-      console.log(`Content preview: ${content.substring(0, 200)}`)
+      getDefaultLogger().info(`⚠️ updateDependencyFile: Content appears to be JSON (composer.json), but file is ${filePath}`)
+      getDefaultLogger().info(`Content preview: ${content.substring(0, 200)}`)
       return content // Don't process JSON content in YAML function
     }
 
@@ -146,44 +164,53 @@ export async function updateDependencyFile(filePath: string, content: string, up
     for (const update of updates) {
       // Clean package name (remove dependency type info like "(dev)")
       const cleanPackageName = update.name.replace(/\s*\(dev\)$/, '').replace(/\s*\(peer\)$/, '').replace(/\s*\(optional\)$/, '')
+      const escapedName = cleanPackageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-      // Create regex to find the package line and update its version
-      // Handle various YAML formats: "package: version", "package:version", "  package: ^version"
-      // Use word boundaries to prevent partial matches (e.g., "zip" matching "unzip")
-      // Capture: (1) package name and colon, (2) version part, (3) optional comment part
+      // Anchor to a key at the start of a line.
+      //
+      // The previous pattern was `(\s*\bNAME\b\s*:\s*)(...)`, which matched the
+      // package name anywhere in the file - including inside a prose comment -
+      // and whose leading `\s*` reached back across the newline before the real
+      // key. Both halves were needed to corrupt a file, and both are gone: `^`
+      // with the `m` flag pins the match to a key position, and the indent is
+      // `[ \t]*`, which cannot cross a line. A commented-out key (`# redis: ^7`)
+      // and a quoted neighbour (`"@types/node"` when updating `node`) no longer
+      // match either, because neither starts with the name. stacksjs/buddy#1453
+      //
+      // Deliberately not anchored at the end, so a CRLF file still matches.
+      //
+      // Groups: 1 indent, 2 key including any quotes, 3 colon and its spacing,
+      // 4 quote around the value, 5 version, 6 inline comment.
       const packageRegex = new RegExp(
-        `(\\s*\\b${cleanPackageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b\\s*:\\s*)([^\\s#\\n\\r]+)(\\s*#.*)?`,
-        'g',
+        `^([ \\t]*)("${escapedName}"|'${escapedName}'|${escapedName})([ \\t]*:[ \\t]*)(["']?)([^\\s#"']+)\\4([ \\t]*#[^\\r\\n]*)?`,
+        'gm',
       )
 
-      // Extract the original version prefix (^, ~, >=, etc.) or lack thereof
-      const currentMatch = updatedContent.match(packageRegex)
-      if (currentMatch) {
-        const fullMatch = currentMatch[0]
-        // Parse the match into parts: package+colon, version, comment
-        const matchParts = fullMatch.match(new RegExp(
-          `(\\s*\\b${cleanPackageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b\\s*:\\s*)([^\\s#\\n\\r]+)(\\s*#.*)?`,
-        ))
-
-        if (matchParts) {
-          const packageAndColon = matchParts[1] // "  package: "
-          const currentVersionInFile = matchParts[2] // "^1.0.0"
-          const commentPart = matchParts[3] || '' // " # comment" or empty
-
+      // A replacer function, so every match is rewritten from its own captures.
+      //
+      // The previous code read the first match, built one replacement string
+      // from it, and handed that literal to `String.replace` with a `g` regex -
+      // writing the first occurrence's version over every other occurrence.
+      updatedContent = updatedContent.replace(
+        packageRegex,
+        (
+          fullMatch: string,
+          indent: string,
+          key: string,
+          separator: string,
+          quote: string,
+          currentVersionInFile: string,
+          commentPart?: string,
+        ) => {
           // Check if current version should be respected (like "*", "latest", etc.)
-          const shouldRespectVersion = (version: string): boolean => {
-            const dynamicIndicators = ['latest', '*', 'main', 'master', 'develop', 'dev']
-            const cleanVersion = version.toLowerCase().trim()
-            return dynamicIndicators.includes(cleanVersion)
+          const dynamicIndicators = ['latest', '*', 'main', 'master', 'develop', 'dev']
+          if (dynamicIndicators.includes(currentVersionInFile.toLowerCase().trim())) {
+            getDefaultLogger().info(`⚠️ Skipping update for ${cleanPackageName} - version "${currentVersionInFile}" should be respected`)
+            return fullMatch
           }
 
-          if (shouldRespectVersion(currentVersionInFile)) {
-            console.log(`⚠️ Skipping update for ${cleanPackageName} - version "${currentVersionInFile}" should be respected`)
-            continue
-          }
-
-          const versionPrefixMatch = currentVersionInFile.match(/^(\D*)/)
-          const originalPrefix = versionPrefixMatch ? versionPrefixMatch[1] : ''
+          // Extract the original version prefix (^, ~, >=, etc.) or lack thereof
+          const originalPrefix = currentVersionInFile.match(/^(\D*)/)?.[1] ?? ''
 
           // Check if newVersion already has a prefix (to avoid double prefixes)
           const newVersionHasPrefix = /^[\^~>=<]/.test(update.newVersion)
@@ -191,17 +218,26 @@ export async function updateDependencyFile(filePath: string, content: string, up
           // Use newVersion as-is if it already has a prefix, otherwise preserve original prefix
           const finalVersion = newVersionHasPrefix ? update.newVersion : `${originalPrefix}${update.newVersion}`
 
-          // Replace with: package+colon + new version + preserved comment
-          const replacement = `${packageAndColon}${finalVersion}${commentPart}`
-          updatedContent = updatedContent.replace(packageRegex, replacement)
-        }
-      }
+          return `${indent}${key}${separator}${quote}${finalVersion}${quote}${commentPart ?? ''}`
+        },
+      )
+    }
+
+    // A corrupted write is worse than a missed update. These files are committed
+    // by a bot, and a deps.yaml that no longer parses fails `Setup Pantry` before
+    // any job in the workflow runs - so nothing downstream is left to catch it.
+    //
+    // Only bail when this function is what broke it: a file that already did not
+    // parse is left to whatever it was doing before. stacksjs/buddy#1453
+    if (updatedContent !== content && parsesAsYaml(content) && !parsesAsYaml(updatedContent)) {
+      getDefaultLogger().warn(`⚠️ Skipping updates for ${filePath}: the rewrite no longer parses as YAML, so the file is left unchanged`)
+      return content
     }
 
     return updatedContent
   }
   catch (error) {
-    console.warn(`Failed to update dependency file ${filePath}:`, error)
+    getDefaultLogger().warn(`Failed to update dependency file ${filePath}:`, error)
     return content
   }
 }
@@ -240,18 +276,18 @@ export async function generateDependencyFileUpdates(updates: PackageUpdate[]): P
             content: updatedContent,
             type: 'update',
           })
-          console.log(`✅ Generated update for ${filePath} with ${packageUpdates.length} package changes`)
+          getDefaultLogger().info(`✅ Generated update for ${filePath} with ${packageUpdates.length} package changes`)
         }
         else {
-          console.log(`ℹ️ No changes needed for ${filePath} - versions already up to date`)
+          getDefaultLogger().info(`ℹ️ No changes needed for ${filePath} - versions already up to date`)
         }
       }
       else {
-        console.warn(`⚠️ Dependency file ${filePath} does not exist`)
+        getDefaultLogger().warn(`⚠️ Dependency file ${filePath} does not exist`)
       }
     }
     catch (error) {
-      console.warn(`Failed to generate updates for dependency file ${filePath}:`, error)
+      getDefaultLogger().warn(`Failed to generate updates for dependency file ${filePath}:`, error)
     }
   }
 

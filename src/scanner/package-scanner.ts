@@ -4,11 +4,16 @@ import type {
   PackageFile,
 } from '../types'
 import { Glob } from 'bun'
-import { readdir, readFile, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { lstat, readdir, readFile } from 'node:fs/promises'
+import { join, relative, sep } from 'node:path'
 import { BuddyError } from '../types'
 import { isDependencyFile, parseDependencyFile as parseDepFile } from '../utils/dependency-file-parser'
+import { isDockerfile, parseDockerfile as parseDockerfileUtil } from '../utils/dockerfile-parser'
 import { isGitHubActionsFile, parseGitHubActionsFile } from '../utils/github-actions-parser'
+import { extractEngines } from './package-json-extras'
+import { shouldSkipPackageDirectory } from '../utils/package-paths'
+import { parsePantryLockFile } from '../utils/pantry-parser'
+import { parseZigManifest } from '../utils/zig-parser'
 
 export class PackageScanner {
   private ignoreGlobs: Glob[] = []
@@ -95,6 +100,47 @@ export class PackageScanner {
         }
       }
 
+      // Look for Dockerfiles
+      const dockerfiles = await this.findDockerfiles()
+      this.logger.info(`🔍 Found ${dockerfiles.length} Dockerfile(s): ${dockerfiles.join(', ')}`)
+      for (const filePath of dockerfiles) {
+        if (this.shouldIgnorePath(filePath)) {
+          continue
+        }
+        const packageFile = await this.parseDockerfile(filePath)
+        if (packageFile) {
+          packageFiles.push(packageFile)
+          this.logger.info(`📦 Parsed Dockerfile: ${filePath} with ${packageFile.dependencies.length} dependencies`)
+        }
+      }
+
+      // Look for Zig manifest files (build.zig.zon)
+      const zigManifests = await this.findZigManifests()
+      this.logger.info(`🔍 Found ${zigManifests.length} Zig manifest(s): ${zigManifests.join(', ')}`)
+      for (const filePath of zigManifests) {
+        if (this.shouldIgnorePath(filePath)) {
+          continue
+        }
+        const packageFile = await this.parseZigManifestFile(filePath)
+        if (packageFile) {
+          packageFiles.push(packageFile)
+          this.logger.info(`📦 Parsed Zig manifest: ${filePath} with ${packageFile.dependencies.length} dependencies`)
+        }
+      }
+
+      // Look for pantry.lock files
+      const pantryLockFiles = await this.findFiles('pantry.lock')
+      for (const filePath of pantryLockFiles) {
+        if (this.shouldIgnorePath(filePath)) {
+          continue
+        }
+        const packageFile = await this.parsePantryLockFile(filePath)
+        if (packageFile) {
+          packageFiles.push(packageFile)
+          this.logger.info(`📦 Parsed pantry.lock: ${filePath} with ${packageFile.dependencies.length} dependencies`)
+        }
+      }
+
       const duration = Date.now() - startTime
       this.logger.success(`Found ${packageFiles.length} package files in ${duration}ms`)
 
@@ -122,6 +168,11 @@ export class PackageScanner {
       this.extractDependencies(packageData.devDependencies, 'devDependencies', filePath, dependencies)
       this.extractDependencies(packageData.peerDependencies, 'peerDependencies', filePath, dependencies)
       this.extractDependencies(packageData.optionalDependencies, 'optionalDependencies', filePath, dependencies)
+
+      // `engines` pins what the project runs on, which goes stale exactly like
+      // a library does. Reported with its own type so bumping it stays an
+      // explicit decision rather than an ordinary dependency update.
+      dependencies.push(...extractEngines(packageData.engines, filePath))
 
       return {
         path: filePath,
@@ -229,9 +280,14 @@ export class PackageScanner {
     try {
       // Look for .github/workflows directory
       const githubDir = '.github'
+      // A generated link is not an owned source directory, even when its
+      // target contains otherwise valid manifests. Check both path components.
+      const githubStats = await lstat(join(this.projectPath, githubDir)).catch(() => null)
+      if (!githubStats?.isDirectory())
+        return workflowFiles
       const workflowsDir = join(this.projectPath, githubDir, 'workflows')
 
-      const stats = await stat(workflowsDir).catch(() => null)
+      const stats = await lstat(workflowsDir).catch(() => null)
       if (stats?.isDirectory()) {
         const allYamlFiles = await this.findFilesByPatternInDir('*.yaml', workflowsDir)
         const allYmlFiles = await this.findFilesByPatternInDir('*.yml', workflowsDir)
@@ -251,6 +307,65 @@ export class PackageScanner {
   }
 
   /**
+   * Find container build files anywhere in the project.
+   *
+   * Walks the tree once and tests each basename with {@link isDockerfile},
+   * which covers `Dockerfile`, `Dockerfile.<suffix>`, `<prefix>.dockerfile`
+   * and `Containerfile`. The previous implementation enumerated eight literal
+   * names and paired them with a `Dockerfile*` glob that the extension-based
+   * matcher could never satisfy, so anything named `api.dockerfile` or living
+   * under a `docker/` directory went undetected.
+   *
+   * @returns Repository-relative paths, forward-slash separated
+   */
+  private async findDockerfiles(): Promise<string[]> {
+    return this.findFilesMatching(isDockerfile)
+  }
+
+  /**
+   * Walk the project tree collecting files whose basename satisfies a predicate.
+   *
+   * @param matches - Predicate applied to each file's basename
+   * @param dir - Directory to search, defaulting to the project root
+   * @returns Repository-relative paths, forward-slash separated
+   */
+  private async findFilesMatching(
+    matches: (fileName: string) => boolean,
+    dir: string = this.projectPath,
+  ): Promise<string[]> {
+    const files: string[] = []
+
+    try {
+      const entries = await readdir(dir)
+
+      for (const entry of entries) {
+        const fullPath = join(dir, entry)
+
+        try {
+          const stats = await lstat(fullPath)
+
+          if (stats.isFile()) {
+            if (matches(entry))
+              files.push(relative(this.projectPath, fullPath).split(sep).join('/'))
+          }
+          else if (stats.isDirectory() && !shouldSkipPackageDirectory(entry)) {
+            files.push(...await this.findFilesMatching(matches, fullPath))
+          }
+        }
+        catch {
+          // Skip broken symlinks or permission errors on individual entries
+          continue
+        }
+      }
+    }
+    catch {
+      // Ignore permission errors and continue
+    }
+
+    return files
+  }
+
+  /**
    * Parse a GitHub Actions workflow file
    */
   async parseGitHubActionsFile(filePath: string): Promise<PackageFile | null> {
@@ -262,6 +377,56 @@ export class PackageScanner {
     }
     catch (_error) {
       this.logger.warn(`Failed to parse GitHub Actions file ${filePath}:`, _error)
+      return null
+    }
+  }
+
+  /**
+   * Parse a Dockerfile
+   */
+  async parseDockerfile(filePath: string): Promise<PackageFile | null> {
+    try {
+      const fullPath = join(this.projectPath, filePath)
+      const content = await readFile(fullPath, 'utf-8')
+      const result = await parseDockerfileUtil(filePath, content)
+      return result
+    }
+    catch (_error) {
+      this.logger.warn(`Failed to parse Dockerfile ${filePath}:`, _error)
+      return null
+    }
+  }
+
+  /**
+   * Find Zig manifest files (build.zig.zon) in the project
+   */
+  private async findZigManifests(): Promise<string[]> {
+    const zigManifests: string[] = []
+
+    try {
+      // Look for build.zig.zon files
+      const manifestFiles = await this.findFiles('build.zig.zon')
+      zigManifests.push(...manifestFiles)
+    }
+    catch {
+      // Ignore if no Zig manifests exist
+    }
+
+    return zigManifests
+  }
+
+  /**
+   * Parse a Zig manifest file (build.zig.zon)
+   */
+  async parseZigManifestFile(filePath: string): Promise<PackageFile | null> {
+    try {
+      const fullPath = join(this.projectPath, filePath)
+      const content = await readFile(fullPath, 'utf-8')
+      const result = await parseZigManifest(filePath, content)
+      return result
+    }
+    catch (_error) {
+      this.logger.warn(`Failed to parse Zig manifest ${filePath}:`, _error)
       return null
     }
   }
@@ -301,6 +466,21 @@ export class PackageScanner {
     }
     catch (_error) {
       this.logger.warn(`Failed to parse Composer file ${filePath}:`, _error)
+      return null
+    }
+  }
+
+  /**
+   * Parse a pantry.lock file
+   */
+  async parsePantryLockFile(filePath: string): Promise<PackageFile | null> {
+    try {
+      const fullPath = join(this.projectPath, filePath)
+      const content = await readFile(fullPath, 'utf-8')
+      return await parsePantryLockFile(filePath, content)
+    }
+    catch (_error) {
+      this.logger.warn(`Failed to parse pantry.lock file ${filePath}:`, _error)
       return null
     }
   }
@@ -385,21 +565,22 @@ export class PackageScanner {
         const fullPath = join(dir, entry)
 
         try {
-          const stats = await stat(fullPath)
+          const stats = await lstat(fullPath)
 
           if (stats.isDirectory()) {
+            // lstat excludes file/directory aliases without following their targets.
+            // Real vendored or workspace directories remain eligible.
             // Skip node_modules and other common ignored directories
-            if (!this.shouldSkipDirectory(entry)) {
+            if (!shouldSkipPackageDirectory(entry)) {
               const subFiles = await this.findFiles(fileName, fullPath)
               files.push(...subFiles)
             }
           }
           else if (stats.isFile() && entry === fileName) {
             // Convert absolute path to relative path from project root
-            // eslint-disable-next-line ts/no-require-imports
-            const path = require('node:path')
-            const relativePath = path.relative(this.projectPath, fullPath)
-            files.push(relativePath)
+            const relativePath = relative(this.projectPath, fullPath)
+            // Normalize path separators to forward slashes for consistency
+            files.push(relativePath.split(sep).join('/'))
           }
         }
         catch {
@@ -419,7 +600,7 @@ export class PackageScanner {
    * Find lock files in the project
    */
   private async findLockFiles(): Promise<string[]> {
-    const lockFileNames = ['bun.lockb', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml']
+    const lockFileNames = ['bun.lock', 'bun.lockb', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml']
     const files: string[] = []
 
     for (const fileName of lockFileNames) {
@@ -442,16 +623,15 @@ export class PackageScanner {
 
       for (const entry of entries) {
         const fullPath = join(this.projectPath, entry)
-        const stats = await stat(fullPath)
+        const stats = await lstat(fullPath)
 
         if (stats.isFile() && entry.endsWith(`.${extension}`)) {
           // Convert absolute path to relative path from project root
-          // eslint-disable-next-line ts/no-require-imports
-          const path = require('node:path')
-          const relativePath = path.relative(this.projectPath, fullPath)
-          files.push(relativePath)
+          const relativePath = relative(this.projectPath, fullPath)
+          // Normalize path separators to forward slashes for consistency
+          files.push(relativePath.split(sep).join('/'))
         }
-        else if (stats.isDirectory() && !this.shouldSkipDirectory(entry)) {
+        else if (stats.isDirectory() && !shouldSkipPackageDirectory(entry)) {
           // Recursively search subdirectories
           const subFiles = await this.findFilesByPatternInDir(pattern, fullPath)
           files.push(...subFiles)
@@ -477,16 +657,15 @@ export class PackageScanner {
 
       for (const entry of entries) {
         const fullPath = join(dir, entry)
-        const stats = await stat(fullPath)
+        const stats = await lstat(fullPath)
 
         if (stats.isFile() && entry.endsWith(`.${extension}`)) {
           // Convert absolute path to relative path from project root
-          // eslint-disable-next-line ts/no-require-imports
-          const path = require('node:path')
-          const relativePath = path.relative(this.projectPath, fullPath)
-          files.push(relativePath)
+          const relativePath = relative(this.projectPath, fullPath)
+          // Normalize path separators to forward slashes for consistency
+          files.push(relativePath.split(sep).join('/'))
         }
-        else if (stats.isDirectory() && !this.shouldSkipDirectory(entry)) {
+        else if (stats.isDirectory() && !shouldSkipPackageDirectory(entry)) {
           const subFiles = await this.findFilesByPatternInDir(pattern, fullPath)
           files.push(...subFiles)
         }
@@ -526,35 +705,12 @@ export class PackageScanner {
   }
 
   /**
-   * Check if a directory should be skipped during scanning
-   */
-  private shouldSkipDirectory(dirName: string): boolean {
-    const skipDirs = [
-      'node_modules',
-      '.git',
-      '.next',
-      '.nuxt',
-      'dist',
-      'build',
-      'coverage',
-      '.nyc_output',
-      'tmp',
-      'temp',
-      '.cache',
-      '.vscode',
-      '.idea',
-    ]
-
-    return skipDirs.includes(dirName) || dirName.startsWith('.')
-  }
-
-  /**
    * Get relative path from project root
    */
   private getRelativePath(absolutePath: string): string {
-    // eslint-disable-next-line ts/no-require-imports
-    const path = require('node:path')
-    return path.relative(this.projectPath, absolutePath)
+    const relativePath = relative(this.projectPath, absolutePath)
+    // Normalize path separators to forward slashes for consistency
+    return relativePath.split(sep).join('/')
   }
 
   /**

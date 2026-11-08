@@ -6,13 +6,13 @@ Buddy provides a comprehensive command-line interface for dependency management,
 
 ```bash
 # Install Buddy globally
-bun add -g buddy-bot
+bun add -g @buddysh/buddy
 
 # Interactive setup (recommended first step)
-buddy-bot setup
+buddy setup
 
 # Or use with bunx (no installation required)
-bunx buddy-bot setup
+bunx @buddysh/buddy setup
 ```
 
 **🚀 Start with `setup`** - The setup command provides a complete Renovate-like configuration experience that automatically configures workflows, tokens, and repository settings.
@@ -20,7 +20,7 @@ bunx buddy-bot setup
 ## Command Structure
 
 ```bash
-buddy-bot <command> [options] [arguments]
+buddy <command> [options] [arguments]
 ```
 
 ## Available Commands
@@ -59,6 +59,15 @@ buddy-bot <command> [options] [arguments]
 | [`compare`](/cli/package#compare) | Compare two versions of a package |
 | [`search`](/cli/package#search) | Search for packages in the registry |
 
+### 📊 Dashboard & Review
+
+| Command | Description |
+|---------|-------------|
+| [`dashboard`](/features/dependency-dashboard) | Create or update the dependency dashboard issue |
+| [`review`](/cli/review) | Review local changes, or a pull request |
+| [`security`](/features/workflow-security) | Static-analyse GitHub Actions workflows |
+| [`doctor`](/cli/review#diagnosing-setup) | Diagnose credentials, git state and analyzer tooling |
+
 ### ⏰ Automation & Scheduling
 
 | Command | Description |
@@ -67,13 +76,15 @@ buddy-bot <command> [options] [arguments]
 
 ## Global Options
 
-All commands support these global options:
+Every command accepts these:
 
 ```bash
---verbose, -v    Enable verbose logging
+--config <path>  Path to a buddy config file
 --help, -h       Show help information
 --version        Show version information
 ```
+
+Almost every command also takes `--verbose, -v` for detailed logging. Options are matched strictly: a flag a command does not declare is an error, not something quietly ignored.
 
 ## Examples
 
@@ -81,53 +92,53 @@ All commands support these global options:
 
 ```bash
 # Interactive setup (recommended for new projects)
-buddy-bot setup
+buddy setup
 
 # Non-interactive setup with defaults
-buddy-bot setup --non-interactive
+buddy setup --non-interactive
 
 # Non-interactive setup with specific preset
-buddy-bot setup --non-interactive --preset testing --verbose
+buddy setup --non-interactive --preset testing --verbose
 
 # Scan for available updates
-buddy-bot scan --verbose
+buddy scan --verbose
 
 # Apply updates and create PRs
-buddy-bot update
+buddy update
 ```
 
 ### Package Analysis
 
 ```bash
 # Get information about a package
-buddy-bot info react
+buddy info react
 
 # Check available versions
-buddy-bot versions typescript --latest 5
+buddy versions typescript --latest 5
 
 # Search for packages
-buddy-bot search "test framework"
+buddy search "test framework"
 ```
 
 ### PR Management
 
 ```bash
 # Rebase a specific PR
-buddy-bot rebase 17
+buddy rebase 17
 
 # Check all PRs for rebase requests
-buddy-bot update-check
+buddy update-check
 
 # Force rebase even if up to date
-buddy-bot rebase 17 --force
+buddy rebase 17 --force
 ```
 
 ## Configuration File
 
-Most commands use settings from `buddy-bot.config.ts`:
+Most commands use settings from `buddy.config.ts`:
 
 ```typescript
-import type { BuddyBotConfig } from 'buddy-bot'
+import type { BuddyConfig } from '@buddysh/buddy'
 
 export default {
   verbose: true,
@@ -145,7 +156,7 @@ export default {
     assignees: ['maintainer'],
     labels: ['dependencies'],
   }
-} satisfies BuddyBotConfig
+} satisfies BuddyConfig
 ```
 
 ## Environment Variables
@@ -153,14 +164,14 @@ export default {
 Buddy uses these environment variables:
 
 ```bash
-# Required for GitHub operations
+# Required for GitHub operations. GH_TOKEN is accepted as an alias
 GITHUB_TOKEN=ghp_xxxxxxxxxxxx
 
-# Optional: Explicitly set GitHub token
-GH_TOKEN=ghp_xxxxxxxxxxxx
+# Optional: a PAT with 'repo' and 'workflow' scopes, used ahead of GITHUB_TOKEN
+BUDDY_TOKEN=ghp_xxxxxxxxxxxx
 
-# Optional: Configure Bun
-BUN_CONFIG_DIR=/path/to/config
+# Optional: output level - silent, error, warn, info, debug
+BUDDY_LOG_LEVEL=debug
 ```
 
 ## Exit Codes
@@ -168,8 +179,7 @@ BUN_CONFIG_DIR=/path/to/config
 Buddy uses standard exit codes:
 
 - **0**: Success
-- **1**: General error (configuration, network, etc.)
-- **2**: Command not found or invalid arguments
+- **1**: Any failure — configuration, network, an unknown command, or an option the command does not accept
 
 ## Debugging
 
@@ -178,7 +188,7 @@ Buddy uses standard exit codes:
 Enable detailed logging for any command:
 
 ```bash
-buddy-bot <command> --verbose
+buddy <command> --verbose
 ```
 
 ### Common Issues
@@ -186,10 +196,10 @@ buddy-bot <command> --verbose
 **Command not found:**
 ```bash
 # Check installation
-which buddy-bot
+which buddy
 
 # Or use bunx
-bunx buddy-bot --version
+bunx @buddysh/buddy --version
 ```
 
 **GitHub token issues:**
@@ -204,7 +214,7 @@ gh auth login
 **Permission errors:**
 ```bash
 # Check repository permissions
-buddy-bot open-settings
+buddy open-settings
 ```
 
 ## Integration Examples
@@ -213,10 +223,12 @@ buddy-bot open-settings
 
 ```yaml
 # .github/workflows/dependencies.yml
+
 - name: Update dependencies
+
   run: |
-    bunx buddy-bot scan --verbose
-    bunx buddy-bot update --strategy patch
+    bunx @buddysh/buddy scan --verbose
+    bunx @buddysh/buddy update --strategy patch
 ```
 
 ### NPM Scripts
@@ -224,10 +236,10 @@ buddy-bot open-settings
 ```json
 {
   "scripts": {
-    "deps:scan": "buddy-bot scan --verbose",
-    "deps:update": "buddy-bot update",
-    "deps:check": "buddy-bot check react typescript",
-    "deps:info": "buddy-bot info"
+    "deps:scan": "buddy scan --verbose",
+    "deps:update": "buddy update",
+    "deps:check": "buddy check react typescript",
+    "deps:info": "buddy info"
   }
 }
 ```
@@ -237,12 +249,12 @@ buddy-bot open-settings
 ```bash
 # Update specific workspace
 cd packages/frontend
-buddy-bot update --strategy minor
+buddy update --strategy minor
 
 # Check all workspaces
 for dir in packages/*/; do
   echo "Checking $dir"
-  cd "$dir" && buddy-bot scan
+  cd "$dir" && buddy scan
   cd ../..
 done
 ```
@@ -250,8 +262,8 @@ done
 ## Performance Tips
 
 1. **Use specific strategies**: `--strategy patch` is faster than `all`
-2. **Filter packages**: Use `--packages` for targeted updates
-3. **Enable caching**: Set `BUN_CONFIG_NO_CACHE=false`
+2. **Filter packages**: Use `buddy scan --packages` to check a short list
+3. **Skip the noise**: Leave `--verbose` off unless you are debugging
 4. **Parallel execution**: Run multiple commands in parallel for monorepos
 
 ## Getting Help
@@ -259,22 +271,23 @@ done
 ### Built-in Help
 
 ```bash
-# General help
-buddy-bot --help
+# General help — the flag and the subcommand do the same thing
+buddy --help
+buddy help
 
 # Command-specific help
-buddy-bot scan --help
-buddy-bot update --help
+buddy scan --help
+buddy update --help
 ```
 
 ### Documentation
 
-- **Full Documentation**: [https://buddy.sh/docs](https://buddy.sh/docs)
+- **Full Documentation**: [buddy.sh/docs](https://buddy.sh/docs)
 - **Configuration Guide**: [/config](/config)
 - **GitHub Setup**: [/features/github-actions](/features/github-actions)
 
 ### Community
 
-- **GitHub Issues**: [Report bugs and feature requests](https://github.com/stacksjs/buddy-bot/issues)
-- **Discussions**: [Community discussions](https://github.com/stacksjs/buddy-bot/discussions)
-- **Discord**: [Join our Discord](https://discord.gg/stacksjs)
+- **GitHub Issues**: [Report bugs and feature requests](https://github.com/stacksjs/buddy/issues)
+- **Discussions**: [Community discussions](https://github.com/stacksjs/buddy/discussions)
+- **Discord**: [Join our Discord](https://stacksjs.com/discord)

@@ -25,7 +25,7 @@ describe('DashboardGenerator', () => {
       const result = generator.generateDashboard(mockDashboardData)
 
       expect(result.title).toBe('Dependency Dashboard')
-      expect(result.body).toContain('This issue lists Buddy Bot updates and detected dependencies')
+      expect(result.body).toContain('This issue lists Buddy updates and detected dependencies')
       expect(result.body).toContain('## Detected dependencies')
     })
 
@@ -43,7 +43,7 @@ describe('DashboardGenerator', () => {
             url: 'https://github.com/test-owner/test-repo/pull/123',
             createdAt: new Date(),
             updatedAt: new Date(),
-            author: 'buddy-bot',
+            author: 'buddy',
             reviewers: [],
             assignees: [],
             labels: ['dependencies'],
@@ -72,7 +72,7 @@ describe('DashboardGenerator', () => {
             url: 'https://github.com/test-owner/test-repo/pull/123',
             createdAt: new Date(),
             updatedAt: new Date(),
-            author: 'buddy-bot',
+            author: 'buddy',
             reviewers: [],
             assignees: [],
             labels: ['dependencies'],
@@ -101,7 +101,7 @@ describe('DashboardGenerator', () => {
             url: 'https://github.com/test-owner/test-repo/pull/123',
             createdAt: new Date(),
             updatedAt: new Date(),
-            author: 'buddy-bot',
+            author: 'buddy',
             reviewers: [],
             assignees: [],
             labels: ['dependencies'],
@@ -191,7 +191,7 @@ describe('DashboardGenerator', () => {
           url: 'https://github.com/test-owner/test-repo/pull/123',
           createdAt: new Date(),
           updatedAt: new Date(),
-          author: 'buddy-bot',
+          author: 'buddy',
           reviewers: [],
           assignees: [],
           labels: ['dependencies'],
@@ -222,7 +222,7 @@ describe('DashboardGenerator', () => {
           url: 'https://github.com/test-owner/test-repo/pull/124',
           createdAt: new Date(),
           updatedAt: new Date(),
-          author: 'buddy-bot',
+          author: 'buddy',
           reviewers: [],
           assignees: [],
           labels: ['dependencies'],
@@ -253,7 +253,7 @@ describe('DashboardGenerator', () => {
           url: 'https://github.com/test-owner/test-repo/pull/125',
           createdAt: new Date(),
           updatedAt: new Date(),
-          author: 'buddy-bot',
+          author: 'buddy',
           reviewers: [],
           assignees: [],
           labels: ['dependencies'],
@@ -284,7 +284,7 @@ describe('DashboardGenerator', () => {
           url: 'https://github.com/test-owner/test-repo/pull/126',
           createdAt: new Date(),
           updatedAt: new Date(),
-          author: 'buddy-bot',
+          author: 'buddy',
           reviewers: [],
           assignees: [],
           labels: ['dependencies'],
@@ -317,7 +317,7 @@ describe('DashboardGenerator', () => {
           url: 'https://github.com/test-owner/test-repo/pull/127',
           createdAt: new Date(),
           updatedAt: new Date(),
-          author: 'buddy-bot',
+          author: 'buddy',
           reviewers: [],
           assignees: [],
           labels: ['dependencies'],
@@ -365,13 +365,13 @@ describe('DashboardGenerator', () => {
 
 ### Summary
 Updated several packages including \`@stacksjs/eslint-config\`, \`@types/bun\`, \`cac\`, and \`ts-pkgx\`.`,
-          head: 'buddy-bot/update-non-major-updates-1751575575536',
+          head: 'buddy/update-non-major-updates-1751575575536',
           base: 'main',
           state: 'open',
           url: 'https://github.com/test-owner/test-repo/pull/20',
           createdAt: new Date(),
           updatedAt: new Date(),
-          author: 'buddy-bot',
+          author: 'buddy',
           reviewers: [],
           assignees: [],
           labels: ['dependencies'],
@@ -410,7 +410,7 @@ Updated several packages including \`@stacksjs/eslint-config\`, \`@types/bun\`, 
           url: 'https://github.com/test-owner/test-repo/pull/123',
           createdAt: new Date(),
           updatedAt: new Date(),
-          author: 'buddy-bot',
+          author: 'buddy',
           reviewers: [],
           assignees: [],
           labels: ['dependencies'],
@@ -442,7 +442,7 @@ Updated several packages including \`@stacksjs/eslint-config\`, \`@types/bun\`, 
           url: 'https://custom-git.company.com/pull/124',
           createdAt: new Date(),
           updatedAt: new Date(),
-          author: 'buddy-bot',
+          author: 'buddy',
           reviewers: [],
           assignees: [],
           labels: ['dependencies'],
@@ -469,13 +469,13 @@ Updated several packages including \`@stacksjs/eslint-config\`, \`@types/bun\`, 
           number: 123,
           title: 'chore(deps): update dependency react to v18',
           body: 'Test PR body',
-          head: 'buddy-bot/update-react-123456',
+          head: 'buddy/update-react-123456',
           base: 'main',
           state: 'open',
           url: 'https://github.com/test-owner/test-repo/pull/123',
           createdAt: new Date(),
           updatedAt: new Date(),
-          author: 'buddy-bot',
+          author: 'buddy',
           reviewers: [],
           assignees: [],
           labels: ['dependencies'],
@@ -492,7 +492,7 @@ Updated several packages including \`@stacksjs/eslint-config\`, \`@types/bun\`, 
         const result = generator.generateDashboard(dashboardData)
 
         // Should include rebase-branch comment
-        expect(result.body).toContain('<!-- rebase-branch=buddy-bot/update-react-123456 -->')
+        expect(result.body).toContain('<!-- rebase-branch=buddy/update-react-123456 -->')
       })
     })
   })
@@ -773,7 +773,7 @@ Dependency files: {{detectedDependencies.dependencyFiles.count}}
             url: 'https://github.com/test-owner/test-repo/pull/123',
             createdAt: new Date(),
             updatedAt: new Date(),
-            author: 'buddy-bot',
+            author: 'buddy',
             reviewers: [],
             assignees: [],
             labels: [],
@@ -853,5 +853,75 @@ Dependency files: {{detectedDependencies.dependencyFiles.count}}
     // Should include rebase branch comments
     expect(result.body).toContain('<!-- rebase-branch=renovate/phpunit-phpunit-12.x -->')
     expect(result.body).toContain('<!-- rebase-branch=renovate/symfony-console-7.x -->')
+  })
+})
+
+/**
+ * `includePackageJson`, `includeDependencyFiles` and `includeGitHubActions`
+ * were declared, documented in the defaults table as `true`, and read by
+ * nothing — every ecosystem was always listed whatever the config said.
+ */
+describe('per-ecosystem include toggles', () => {
+  const generator = new DashboardGenerator()
+
+  function file(path: string, type: PackageFile['type'], depType: PackageFile['dependencies'][number]['type']): PackageFile {
+    return {
+      path,
+      type,
+      content: '',
+      dependencies: [{ name: `dep-in-${path}`, currentVersion: '1.0.0', type: depType, file: path }],
+    }
+  }
+
+  const data: DashboardData = {
+    repository: { owner: 'o', name: 'r', provider: 'github' },
+    openPRs: [],
+    detectedDependencies: {
+      packageJson: [file('package.json', 'package.json', 'dependencies')],
+      dependencyFiles: [file('deps.yaml', 'deps.yaml', 'dependencies')],
+      githubActions: [file('.github/workflows/ci.yml', 'github-actions', 'github-actions')],
+    },
+    lastUpdated: new Date('2024-01-01T00:00:00Z'),
+  }
+
+  it('success case - everything is listed by default', () => {
+    const { body } = generator.generateDashboard(data)
+
+    expect(body).toContain('<summary>npm</summary>')
+    expect(body).toContain('<summary>github-actions</summary>')
+    expect(body).toContain('<summary>dependency-files</summary>')
+  })
+
+  it('success case - includePackageJson: false drops the npm section only', () => {
+    const { body } = generator.generateDashboard(data, { includePackageJson: false })
+
+    expect(body).not.toContain('<summary>npm</summary>')
+    expect(body).toContain('<summary>github-actions</summary>')
+    expect(body).toContain('<summary>dependency-files</summary>')
+  })
+
+  it('success case - includeGitHubActions: false drops the actions section only', () => {
+    const { body } = generator.generateDashboard(data, { includeGitHubActions: false })
+
+    expect(body).not.toContain('<summary>github-actions</summary>')
+    expect(body).toContain('<summary>npm</summary>')
+  })
+
+  it('success case - includeDependencyFiles: false drops the dependency-files section only', () => {
+    const { body } = generator.generateDashboard(data, { includeDependencyFiles: false })
+
+    expect(body).not.toContain('<summary>dependency-files</summary>')
+    expect(body).toContain('<summary>npm</summary>')
+  })
+
+  it('edge case - all three off leaves the heading and nothing under it', () => {
+    const { body } = generator.generateDashboard(data, {
+      includePackageJson: false,
+      includeDependencyFiles: false,
+      includeGitHubActions: false,
+    })
+
+    expect(body).toContain('## Detected dependencies')
+    expect(body).not.toContain('<summary>')
   })
 })
